@@ -1,0 +1,20 @@
+name: wartime-rl
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - matplotlib
+  - pygame
+  - pip:
+    - --pre
+    - --index-url https://download.pytorch.org/whl/nightly/cu128
+    - --no-cache-dir
+    - torch
+    - torchvision
+    - torchaudio
+    - gymnasium
+    - tensorboard
+    - tqdm
