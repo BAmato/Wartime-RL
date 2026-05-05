@@ -1,337 +1,341 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-
 import pygame
 import sys
+import os
+from env.map_config import (
+    TERRITORIES, CONTINENTS, ATTACK_PAIRS,
+    TERRITORY_COLORS, OWNER_TINT,
+    SPRITE_W, SPRITE_H, WIN_W, WIN_H
+)
 
-# Tile type constants
-EMPTY = 0
-FRIENDLY = 1
-ENEMY = 2
-RESOURCE = 3
-OBSTACLE = 4
-BASE = 5
 
 class WartimeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"]}
 
-    def __init__(self, grid_size=8, render_mode=None):
+    def __init__(self, render_mode=None):
         super().__init__()
-        self.grid_size = grid_size
         self.render_mode = render_mode
+        self.attack_bonus = False
 
-        # Observation: flattened grid
+        # Observation: for each territory [owner (0-2), armies (normalized)]
         self.observation_space = spaces.Box(
-            low=0, high=5,
-            shape=(grid_size * grid_size,),
+            low=0, high=1,
+            shape=(len(TERRITORIES) * 2,),
             dtype=np.float32
         )
 
-        # Actions: 4 directions (up, down, left, right)
-        self.action_space = spaces.Discrete(4)
+        # Actions: index into ATTACK_PAIRS
+        self.action_space = spaces.Discrete(len(ATTACK_PAIRS))
 
-        # Direction mappings
-        self.directions = {
-            0: (-1, 0),  # up
-            1: (1, 0),   # down
-            2: (0, -1),  # left
-            3: (0, 1)    # right
-        }
+        self._screen = None
+        self._clock = None
+        self._font = None
+        self._sprites = None
 
+    # -------------------------------------------------------------------------
+    # RESET
+    # -------------------------------------------------------------------------
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        
-        # Initialize empty grid
-        self.grid = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
-        
-        # Place friendly base in top-left
-        self.agent_pos = [0, 0]
-        self.grid[0][0] = BASE
-        
-        # Place enemy base in bottom-right
-        self.enemy_pos = [self.grid_size-1, self.grid_size-1]
-        self.grid[self.grid_size-1][self.grid_size-1] = ENEMY
-        
-        # Place some resource tiles
-        self.grid[2][2] = RESOURCE
-        self.grid[4][4] = RESOURCE
-        self.grid[2][5] = RESOURCE
-        
-        # Place obstacle tiles
-        obstacles = [
-            (1, 3), (2, 3), (3, 3),  # vertical wall
-            (5, 2), (5, 3), (5, 4),  # horizontal wall
-        ]
-        for r, c in obstacles:
-            self.grid[r][c] = OBSTACLE
+
+        # Initialize all territories as neutral with 1 army
+        self.state = {
+            name: {"owner": "neutral", "armies": 1}
+            for name in TERRITORIES
+        }
+
+        # Agent starts in Alaska
+        self.state["Alaska"]["owner"] = "agent"
+        self.state["Alaska"]["armies"] = 3
+
+        # Enemy starts in Argentina
+        self.state["Argentina"]["owner"] = "enemy"
+        self.state["Argentina"]["armies"] = 3
 
         self.steps = 0
         self.max_steps = 200
+        self.attack_bonus = False
 
         return self._get_obs(), {}
 
+    # -------------------------------------------------------------------------
+    # STEP
+    # -------------------------------------------------------------------------
     def step(self, action):
-            self.steps += 1
-            reward = 0.0
-            terminated = False
-            truncated = self.steps >= self.max_steps
+        self.steps += 1
+        reward = 0.0
+        terminated = False
+        truncated = self.steps >= self.max_steps
 
-            # Calculate new position
-            dr, dc = self.directions[action]
-            new_r = self.agent_pos[0] + dr
-            new_c = self.agent_pos[1] + dc
+        # Decode action into attack pair
+        src, tgt = ATTACK_PAIRS[action]
 
-            # Check bounds
-            if 0 <= new_r < self.grid_size and 0 <= new_c < self.grid_size:
-                tile = self.grid[new_r][new_c]
+        # Validate action - agent must own src and have 2+ armies
+        if self.state[src]["owner"] != "agent" or self.state[src]["armies"] < 2:
+            reward = -0.1  # invalid action penalty
+        else:
+            tgt_owner = self.state[tgt]["owner"]
 
-                if tile == OBSTACLE:
-                    reward = -0.1  # bumped into wall
+            if tgt_owner == "agent":
+                reward = -0.05  # attacking own territory
 
-                elif tile == RESOURCE:
-                    reward = +2.0  # captured resource tile
-                    self.grid[new_r][new_c] = FRIENDLY
-                    self.agent_pos = [new_r, new_c]
+            elif tgt_owner == "neutral":
+                # Capture neutral territory
+                self.state[tgt]["owner"] = "agent"
+                self.state[tgt]["armies"] = 1
+                self.state[src]["armies"] -= 1
+                reward = +1.0
 
-                elif tile == ENEMY:
-                # Stochastic combat via dice roll
-                    if self._resolve_combat(attacker_dice=2, defender_dice=1):
-                        # Agent wins combat
-                        reward = +3.0
-                        self.grid[new_r][new_c] = FRIENDLY
-                        self.agent_pos = [new_r, new_c]
-                        if [new_r, new_c] == self.enemy_pos:
-                            reward += 20.0
-                            terminated = True
-                    else:
-                        # Agent loses combat - pushed back, loses current tile
-                        reward = -3.0
-                        self.grid[self.agent_pos[0]][self.agent_pos[1]] = EMPTY
+            elif tgt_owner == "enemy":
+                # Combat via dice roll
+                attacker_dice = 2 + (1 if self.attack_bonus else 0)
+                if self._resolve_combat(attacker_dice=attacker_dice, defender_dice=1):
+                    # Agent wins
+                    self.state[tgt]["owner"] = "agent"
+                    self.state[tgt]["armies"] = 1
+                    self.state[src]["armies"] -= 1
+                    reward = +3.0
+                else:
+                    # Agent loses
+                    self.state[src]["armies"] -= 1
+                    if self.state[src]["armies"] < 1:
+                        self.state[src]["armies"] = 1
+                    reward = -3.0
 
-                elif tile == EMPTY:
-                    reward = +1.0  # captured neutral territory
-                    self.grid[new_r][new_c] = FRIENDLY
-                    self.agent_pos = [new_r, new_c]
+            self.attack_bonus = False
 
-                elif tile == FRIENDLY:
-                    reward = -0.05  # already own this tile, slight penalty
+        # Continent bonus armies
+        reward += self._apply_continent_bonus()
 
-            else:
-                reward = -0.1  # out of bounds
+        # Survival bonus
+        reward += 0.1
 
-            # Time survival bonus every step
-            reward += 0.1
+        # Check win condition - enemy has no territories left
+        enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
+        if len(enemy_territories) == 0:
+            reward += 20.0
+            terminated = True
 
-            # Check lose condition - agent returns to base and base is surrounded
-            # Check lose condition
-            if self._check_lose_condition():
-                reward = -10.0
-                terminated = True
+        # Enemy takes its turn
+        enemy_reward = self._enemy_turn()
+        reward += enemy_reward
 
-            # Enemy takes its turn
-            enemy_reward = self._move_enemy()
-            reward += enemy_reward
+        # Check lose condition - agent has no territories left
+        agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
+        if len(agent_territories) == 0:
+            reward -= 10.0
+            terminated = True
 
-            # Random event
-            event_reward, event_name = self._random_event()
-            reward += event_reward
-    
-            return self._get_obs(), reward, terminated, truncated, {}
+        # Random event
+        event_reward, _ = self._random_event()
+        reward += event_reward
 
-    def _check_lose_condition(self):
-        # Lose if enemy reaches the friendly base tile directly
-        base_r, base_c = 0, 0
-        e_r, e_c = self.enemy_pos
-        return [e_r, e_c] == [base_r, base_c]
+        return self._get_obs(), reward, terminated, truncated, {}
 
+    # -------------------------------------------------------------------------
+    # OBSERVATION
+    # -------------------------------------------------------------------------
     def _get_obs(self):
-        return self.grid.flatten()
+        obs = []
+        owner_map = {"neutral": 0.0, "agent": 0.5, "enemy": 1.0}
+        for name in TERRITORIES:
+            d = self.state[name]
+            obs.append(owner_map[d["owner"]])
+            obs.append(min(d["armies"] / 10.0, 1.0))
+        return np.array(obs, dtype=np.float32)
 
+    # -------------------------------------------------------------------------
+    # CONTINENT BONUS
+    # -------------------------------------------------------------------------
+    def _apply_continent_bonus(self):
+        bonus = 0.0
+        for cont, data in CONTINENTS.items():
+            owners = [self.state[t]["owner"] for t in data["territories"]]
+            if all(o == "agent" for o in owners):
+                for t in data["territories"]:
+                    self.state[t]["armies"] += 1
+                bonus += data["bonus_armies"] * 0.5
+        return bonus
+
+    # -------------------------------------------------------------------------
+    # DICE
+    # -------------------------------------------------------------------------
+    def _roll_dice(self, num_dice):
+        return max(self.np_random.integers(1, 7) for _ in range(num_dice))
+
+    def _resolve_combat(self, attacker_dice=2, defender_dice=1):
+        return self._roll_dice(attacker_dice) > self._roll_dice(defender_dice)
+
+    # -------------------------------------------------------------------------
+    # ENEMY AI
+    # -------------------------------------------------------------------------
+    def _enemy_turn(self):
+        reward = 0.0
+
+        # Find all enemy territories that can attack
+        enemy_srcs = [
+            name for name, d in self.state.items()
+            if d["owner"] == "enemy" and d["armies"] >= 2
+        ]
+
+        if not enemy_srcs:
+            # Give enemy a free army if it has none to attack with
+            enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
+            if enemy_territories:
+                self.state[enemy_territories[0]]["armies"] += 1
+            return reward
+
+        # Enemy picks the attack that targets an agent territory if possible
+        best_src, best_tgt = None, None
+        for src in enemy_srcs:
+            for tgt in TERRITORIES[src]["adjacent"]:
+                if tgt not in TERRITORIES:
+                    continue
+                if self.state[tgt]["owner"] == "agent":
+                    best_src, best_tgt = src, tgt
+                    break
+            if best_src:
+                break
+
+        # If no agent territory adjacent, attack neutral
+        if not best_src:
+            for src in enemy_srcs:
+                for tgt in TERRITORIES[src]["adjacent"]:
+                    if tgt not in TERRITORIES:
+                        continue
+                    if self.state[tgt]["owner"] == "neutral":
+                        best_src, best_tgt = src, tgt
+                        break
+                if best_src:
+                    break
+
+        if best_src and best_tgt:
+            if self._resolve_combat(attacker_dice=1, defender_dice=2):
+                self.state[best_tgt]["owner"] = "enemy"
+                self.state[best_tgt]["armies"] = 1
+                self.state[best_src]["armies"] -= 1
+                reward = -3.0
+            else:
+                self.state[best_src]["armies"] -= 1
+                if self.state[best_src]["armies"] < 1:
+                    self.state[best_src]["armies"] = 1
+
+        return reward
+
+    # -------------------------------------------------------------------------
+    # RANDOM EVENTS
+    # -------------------------------------------------------------------------
+    def _random_event(self):
+        if self.np_random.random() > 0.10:
+            return 0.0, "No event"
+
+        events = ["supply_drop", "enemy_retreat", "ambush", "reinforcements"]
+        event = events[self.np_random.integers(0, len(events))]
+        reward = 0.0
+
+        if event == "supply_drop":
+            agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
+            if agent_territories:
+                idx = self.np_random.integers(0, len(agent_territories))
+                self.state[agent_territories[idx]]["armies"] += 2
+                reward = +1.0
+
+        elif event == "enemy_retreat":
+            enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
+            if enemy_territories:
+                idx = self.np_random.integers(0, len(enemy_territories))
+                self.state[enemy_territories[idx]]["armies"] = max(
+                    1, self.state[enemy_territories[idx]]["armies"] - 1
+                )
+
+        elif event == "ambush":
+            reward += self._enemy_turn()
+
+        elif event == "reinforcements":
+            self.attack_bonus = True
+            reward = +0.5
+
+        return reward, event
+
+    # -------------------------------------------------------------------------
+    # RENDER
+    # -------------------------------------------------------------------------
     def render(self):
         if self.render_mode != "human":
             return
 
-        # Initialize pygame on first render call
-        if not hasattr(self, '_screen'):
+        if self._screen is None:
             pygame.init()
-            self.cell_size = 80
-            self.screen_size = self.grid_size * self.cell_size
-            self._screen = pygame.display.set_mode((self.screen_size, self.screen_size))
+            self._screen = pygame.display.set_mode((WIN_W, WIN_H))
             pygame.display.set_caption("Wartime-RL")
             self._clock = pygame.time.Clock()
-            self._font = pygame.font.SysFont("Arial", 18, bold=True)
+            self._font = pygame.font.SysFont("Arial", 12, bold=True)
+            self._load_sprites()
 
-        # Colors for each tile type
-        colors = {
-            0: (200, 200, 200),   # EMPTY - light gray
-            1: (100, 180, 100),   # FRIENDLY - green
-            2: (200, 80,  80),    # ENEMY - red
-            3: (220, 180, 50),    # RESOURCE - gold
-            4: (80,  60,  40),    # OBSTACLE - dark brown
-            5: (50,  100, 200),   # BASE - blue
-        }
-
-        tile_labels = {
-            0: "",
-            1: "F",
-            2: "E",
-            3: "R",
-            4: "X",
-            5: "B",
-        }
-
-        # Handle window close button
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
 
-        # Draw grid
-        for r in range(self.grid_size):
-            for c in range(self.grid_size):
-                tile = int(self.grid[r][c])
-                color = colors.get(tile, (200, 200, 200))
-                rect = pygame.Rect(c * self.cell_size, r * self.cell_size,
-                                   self.cell_size, self.cell_size)
+        self._screen.fill((180, 210, 230))
 
-                # Fill tile
-                pygame.draw.rect(self._screen, color, rect)
+        # Draw neutral sprites first
+        for name in TERRITORIES:
+            self._screen.blit(self._sprites[name], (0, 0))
 
-                # Draw border
-                pygame.draw.rect(self._screen, (50, 50, 50), rect, 1)
+        # Draw ownership color overlay using scaled polygons
+        owner_colors = {
+            "agent":   (100, 200, 100, 140),
+            "enemy":   (220, 80,  80,  140),
+            "neutral": None
+        }
 
-                # Draw label
-                label = tile_labels.get(tile, "")
-                if label:
-                    text = self._font.render(label, True, (255, 255, 255))
-                    text_rect = text.get_rect(center=rect.center)
-                    self._screen.blit(text, text_rect)
+        overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
 
-        # Highlight agent position
-        ar, ac = self.agent_pos
-        agent_rect = pygame.Rect(ac * self.cell_size, ar * self.cell_size,
-                                  self.cell_size, self.cell_size)
-        pygame.draw.rect(self._screen, (255, 255, 255), agent_rect, 4)
+        def sp(pt):
+            return (int(pt[0] * WIN_W / SPRITE_W),
+                    int(pt[1] * WIN_H / SPRITE_H))
 
-        # Draw step counter
+        for name, data in self.state.items():
+            color = owner_colors[data["owner"]]
+            if color is not None:
+                scaled_poly = [sp(p) for p in TERRITORIES[name]["polygon"]]
+                pygame.draw.polygon(overlay, color, scaled_poly)
+
+        self._screen.blit(overlay, (0, 0))
+
+        # Draw labels and army counts
+        for name, data in self.state.items():
+            cx, cy = sp(TERRITORIES[name]["center"])
+            label = self._font.render(name, True, (20, 20, 20))
+            armies = self._font.render(f"[{data['armies']}]", True, (20, 20, 20))
+            self._screen.blit(label, (cx - label.get_width()//2, cy - 10))
+            self._screen.blit(armies, (cx - armies.get_width()//2, cy + 5))
+
         step_text = self._font.render(f"Step: {self.steps}", True, (0, 0, 0))
-        self._screen.blit(step_text, (5, 5))
+        self._screen.blit(step_text, (10, 10))
 
         pygame.display.flip()
-        self._clock.tick(10)  # 10 FPS
+        self._clock.tick(10)
+
+    def _load_sprites(self):
+        """Load sprites as neutral only, ownership shown via polygon overlay."""
+        self._sprites = {}
+        for name in TERRITORIES:
+            filename = name.lower().replace(" ", "_") + ".png"
+            path = os.path.join("assets", filename)
+            raw = pygame.image.load(path).convert_alpha()
+            scaled = pygame.transform.scale(raw, (WIN_W, WIN_H))
+            self._sprites[name] = scaled
 
     def close(self):
-        if hasattr(self, '_screen'):
+        if self._screen is not None:
             pygame.quit()
+            self._screen = None
 
     def close(self):
-        pass
-
-    def _roll_dice(self, num_dice):
-        """Roll num_dice six-sided dice and return the highest value."""
-        return max(self.np_random.integers(1, 7) for _ in range(num_dice))
-
-    def _resolve_combat(self, attacker_dice=2, defender_dice=1):
-        """
-        Resolve combat between attacker and defender.
-        Returns True if attacker wins, False if defender wins.
-        Ties go to defender.
-        """
-        attacker_roll = self._roll_dice(attacker_dice)
-        defender_roll = self._roll_dice(defender_dice)
-        return attacker_roll > defender_roll
-    
-    def _move_enemy(self):
-        """Simple enemy AI - moves toward the friendly base."""
-        base_r, base_c = 0, 0
-        e_r, e_c = self.enemy_pos
-
-        # Calculate direction toward base
-        dr = np.sign(base_r - e_r)
-        dc = np.sign(base_c - e_c)
-
-        # Try to move toward base, prioritize row then column
-        moved = False
-        for new_r, new_c in [(e_r + dr, e_c), (e_r, e_c + dc)]:
-            if 0 <= new_r < self.grid_size and 0 <= new_c < self.grid_size:
-                tile = self.grid[new_r][new_c]
-
-                if tile == OBSTACLE:
-                    continue
-
-                elif tile == FRIENDLY or tile == BASE:
-                    # Enemy attacks friendly tile via dice roll
-                    if self._resolve_combat(attacker_dice=1, defender_dice=2):
-                        # Enemy wins - captures tile
-                        self.grid[e_r][e_c] = EMPTY
-                        self.grid[new_r][new_c] = ENEMY
-                        self.enemy_pos = [new_r, new_c]
-                        return -3.0  # agent loses a tile
-                    else:
-                        # Enemy loses combat
-                        return 0.0
-                    moved = True
-                    break
-
-                elif tile == EMPTY:
-                    # Enemy moves into empty tile
-                    self.grid[e_r][e_c] = EMPTY
-                    self.grid[new_r][new_c] = ENEMY
-                    self.enemy_pos = [new_r, new_c]
-                    moved = True
-                    break
-
-        return 0.0
-    
-    def _random_event(self):
-        """
-        Random events that can help or hinder the agent.
-        10% chance of triggering each step.
-        """
-        if self.np_random.random() > 0.10:
-            return 0.0, "No event"
-
-        events = [
-            "supply_drop",      # bonus resources appear
-            "enemy_retreat",    # enemy moves away from base
-            "ambush",          # enemy gets extra move
-            "reinforcements",  # agent gets attack bonus next turn
-        ]
-
-        event = events[self.np_random.integers(0, len(events))]
-        reward = 0.0
-
-        if event == "supply_drop":
-            # Place a new resource tile in a random empty cell
-            empty_cells = list(zip(*np.where(self.grid == EMPTY)))
-            if empty_cells:
-                idx = self.np_random.integers(0, len(empty_cells))
-                r, c = empty_cells[idx]
-                self.grid[r][c] = RESOURCE
-                reward = +1.0
-
-        elif event == "enemy_retreat":
-            # Enemy moves away from base randomly
-            e_r, e_c = self.enemy_pos
-            directions = [(-1,0),(1,0),(0,-1),(0,1)]
-            self.np_random.shuffle(directions)
-            for dr, dc in directions:
-                new_r, new_c = e_r + dr, e_c + dc
-                if 0 <= new_r < self.grid_size and 0 <= new_c < self.grid_size:
-                    if self.grid[new_r][new_c] == EMPTY:
-                        self.grid[e_r][e_c] = EMPTY
-                        self.grid[new_r][new_c] = ENEMY
-                        self.enemy_pos = [new_r, new_c]
-                        break
-
-        elif event == "ambush":
-            # Enemy gets an extra attack this turn
-            reward += self._move_enemy()
-
-        elif event == "reinforcements":
-            # Agent gets attack bonus next turn
-            self.attack_bonus = True
-            reward = +0.5
-
-        return reward, event
+        if self._screen is not None:
+            pygame.quit()
+            self._screen = None
