@@ -2,6 +2,9 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+import pygame
+import sys
+
 # Tile type constants
 EMPTY = 0
 FRIENDLY = 1
@@ -121,6 +124,7 @@ class WartimeEnv(gym.Env):
             reward += 0.1
 
             # Check lose condition - agent returns to base and base is surrounded
+            # Check lose condition
             if self._check_lose_condition():
                 reward = -10.0
                 terminated = True
@@ -136,24 +140,90 @@ class WartimeEnv(gym.Env):
             return self._get_obs(), reward, terminated, truncated, {}
 
     def _check_lose_condition(self):
-        # Lose if enemy reaches friendly base
+        # Lose if enemy reaches the friendly base tile directly
         base_r, base_c = 0, 0
-        neighbors = [
-            (base_r-1, base_c), (base_r+1, base_c),
-            (base_r, base_c-1), (base_r, base_c+1)
-        ]
-        enemy_neighbors = sum(
-            1 for r, c in neighbors
-            if 0 <= r < self.grid_size and 0 <= c < self.grid_size
-            and self.grid[r][c] == ENEMY
-        )
-        return enemy_neighbors >= 2  # lose if 2+ enemy tiles surround base
+        e_r, e_c = self.enemy_pos
+        return [e_r, e_c] == [base_r, base_c]
 
     def _get_obs(self):
         return self.grid.flatten()
 
     def render(self):
-        pass  # pygame rendering will go here later
+        if self.render_mode != "human":
+            return
+
+        # Initialize pygame on first render call
+        if not hasattr(self, '_screen'):
+            pygame.init()
+            self.cell_size = 80
+            self.screen_size = self.grid_size * self.cell_size
+            self._screen = pygame.display.set_mode((self.screen_size, self.screen_size))
+            pygame.display.set_caption("Wartime-RL")
+            self._clock = pygame.time.Clock()
+            self._font = pygame.font.SysFont("Arial", 18, bold=True)
+
+        # Colors for each tile type
+        colors = {
+            0: (200, 200, 200),   # EMPTY - light gray
+            1: (100, 180, 100),   # FRIENDLY - green
+            2: (200, 80,  80),    # ENEMY - red
+            3: (220, 180, 50),    # RESOURCE - gold
+            4: (80,  60,  40),    # OBSTACLE - dark brown
+            5: (50,  100, 200),   # BASE - blue
+        }
+
+        tile_labels = {
+            0: "",
+            1: "F",
+            2: "E",
+            3: "R",
+            4: "X",
+            5: "B",
+        }
+
+        # Handle window close button
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        # Draw grid
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                tile = int(self.grid[r][c])
+                color = colors.get(tile, (200, 200, 200))
+                rect = pygame.Rect(c * self.cell_size, r * self.cell_size,
+                                   self.cell_size, self.cell_size)
+
+                # Fill tile
+                pygame.draw.rect(self._screen, color, rect)
+
+                # Draw border
+                pygame.draw.rect(self._screen, (50, 50, 50), rect, 1)
+
+                # Draw label
+                label = tile_labels.get(tile, "")
+                if label:
+                    text = self._font.render(label, True, (255, 255, 255))
+                    text_rect = text.get_rect(center=rect.center)
+                    self._screen.blit(text, text_rect)
+
+        # Highlight agent position
+        ar, ac = self.agent_pos
+        agent_rect = pygame.Rect(ac * self.cell_size, ar * self.cell_size,
+                                  self.cell_size, self.cell_size)
+        pygame.draw.rect(self._screen, (255, 255, 255), agent_rect, 4)
+
+        # Draw step counter
+        step_text = self._font.render(f"Step: {self.steps}", True, (0, 0, 0))
+        self._screen.blit(step_text, (5, 5))
+
+        pygame.display.flip()
+        self._clock.tick(10)  # 10 FPS
+
+    def close(self):
+        if hasattr(self, '_screen'):
+            pygame.quit()
 
     def close(self):
         pass
