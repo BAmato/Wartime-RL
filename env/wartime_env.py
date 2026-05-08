@@ -100,8 +100,6 @@ class WartimeEnv(gym.Env):
         action_type = "invalid"
         agent_reinforcements = 0
         enemy_reinforcements = 0
-        continent_bonus_reward = 0.0
-        territory_control_reward = 0.0
 
         if self.turn_phase == self.PHASE_REINFORCE:
             agent_reinforcements = self._handle_deploy_action(action)
@@ -110,7 +108,7 @@ class WartimeEnv(gym.Env):
             else:
                 reward += self.cfg.invalid_action
         else:
-            action_type, action_reward, turn_ended, continent_bonus_reward = (
+            action_type, action_reward, turn_ended = (
                 self._handle_attack_action(action)
             )
             reward += action_reward
@@ -136,8 +134,6 @@ class WartimeEnv(gym.Env):
                 if not terminated:
                     event_reward, event = self._random_event()
                     reward += event_reward
-                    territory_control_reward = self._territory_control_reward()
-                    reward += territory_control_reward
                     self._start_agent_turn()
 
         reward += self.cfg.survival
@@ -155,8 +151,6 @@ class WartimeEnv(gym.Env):
             "enemy_territories": len(enemy_territories),
             "agent_reinforcements": agent_reinforcements,
             "enemy_reinforcements": enemy_reinforcements,
-            "continent_bonus_reward": continent_bonus_reward,
-            "territory_control_reward": territory_control_reward,
             "attack_bonus_active": self.attack_bonus,
             "curriculum_level": self.curriculum_level,
             "curriculum_phase": phase.name,
@@ -259,29 +253,27 @@ class WartimeEnv(gym.Env):
 
     def _handle_attack_action(self, action):
         if action == self.pass_action:
-            return "pass", 0.0, True, 0.0
+            return "pass", 0.0, True
         if action < self.attack_action_offset or action >= self.pass_action:
-            return "invalid", self.cfg.invalid_action, False, 0.0
+            return "invalid", self.cfg.invalid_action, False
 
         attack_idx = action - self.attack_action_offset
         src, tgt = ATTACK_PAIRS[attack_idx]
-        attack_reward, continent_bonus_reward = self._resolve_agent_attack(src, tgt)
-        return "attack", attack_reward, True, continent_bonus_reward
+        return "attack", self._resolve_agent_attack(src, tgt), True
 
     def _resolve_agent_attack(self, src, tgt):
         if self.state[src]["owner"] != "agent" or self.state[src]["armies"] < 2:
-            return self.cfg.invalid_action, 0.0
+            return self.cfg.invalid_action
 
         tgt_owner = self.state[tgt]["owner"]
         if tgt_owner == "agent":
-            return self.cfg.friendly_fire, 0.0
+            return self.cfg.friendly_fire
 
         if tgt_owner == "neutral":
-            continent_bonus = self._continent_capture_reward(tgt)
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src)
             self.state[tgt]["armies"] = moved
-            return self.cfg.capture_neutral + continent_bonus, continent_bonus
+            return self.cfg.capture_neutral
 
         attacker_dice = self.gameplay.attacker_dice
         if self.attack_bonus:
@@ -291,14 +283,13 @@ class WartimeEnv(gym.Env):
             attacker_dice=attacker_dice,
             defender_dice=self.gameplay.defender_dice,
         ):
-            continent_bonus = self._continent_capture_reward(tgt)
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src)
             self.state[tgt]["armies"] = moved
-            return self.cfg.win_combat + continent_bonus, continent_bonus
+            return self.cfg.win_combat
 
         self._remove_armies(src, self.gameplay.combat_loss_armies)
-        return self.cfg.lose_combat, 0.0
+        return self.cfg.lose_combat
 
     def _start_agent_turn(self):
         self.turn_phase = self.PHASE_REINFORCE
@@ -373,27 +364,6 @@ class WartimeEnv(gym.Env):
                 neutral_options += 1
 
         return (enemy_pressure * 10) + (neutral_options * 3) - self.state[name]["armies"]
-
-    def _continent_capture_reward(self, territory):
-        continent = TERRITORIES[territory]["continent"]
-        continent_data = CONTINENTS[continent]
-        territories = continent_data["territories"]
-        controlled_before = all(
-            self.state[name]["owner"] == "agent"
-            for name in territories
-        )
-        controlled_after = all(
-            name == territory or self.state[name]["owner"] == "agent"
-            for name in territories
-        )
-        if controlled_before or not controlled_after:
-            return 0.0
-        return continent_data["bonus_armies"] * self.cfg.continent_scale
-
-    def _territory_control_reward(self):
-        agent_count = len(self._owned_territories("agent"))
-        enemy_count = len(self._owned_territories("enemy"))
-        return (agent_count - enemy_count) * self.cfg.territory_control_scale
 
     def _owned_territories(self, owner):
         return [name for name, data in self.state.items() if data["owner"] == owner]
@@ -754,8 +724,6 @@ class WartimeEnv(gym.Env):
         y = draw_section("Reward", y)
         y = metric("Step reward", f"{hud.get('step_reward', 0.0):+.2f}", y)
         y = metric("Episode total", f"{hud.get('episode_reward', 0.0):+.2f}", y)
-        y = metric("Continent", f"{info.get('continent_bonus_reward', 0.0):+.2f}", y)
-        y = metric("Terr control", f"{info.get('territory_control_reward', 0.0):+.2f}", y)
 
         y = draw_section("Events", y)
         event_name = info.get("event", "No event")

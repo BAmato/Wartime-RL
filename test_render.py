@@ -187,8 +187,6 @@ while True:
         f"action={action:3d} ({action_label}) \n"
         f"phase={info['turn_phase']} pending={info['pending_reinforcements']} \n"
         f"reward={reward:+.2f} \n"
-        f"continent_bonus={info['continent_bonus_reward']:+.2f} "
-        f"territory_control={info['territory_control_reward']:+.2f} \n"
         f"agent={info['agent_territories']}\n"
         f"enemy={info['enemy_territories']} \n"
         f"event={info['event']}"

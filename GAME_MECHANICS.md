@@ -37,6 +37,10 @@ Reinforcement counts are based on territory count plus continent bonuses.
 
 - Combat uses configurable dice values from `GameplayConfig`.
 - Failed attacks remove `GameplayConfig.combat_loss_armies`.
+- Existing capture, combat, survival, terminal, and event rewards remain in
+  `RewardConfig`.
+- This branch does not add continent-completion or territory-control reward
+  shaping.
 - Random events are controlled by curriculum phase probability:
   - `supply_drop`
   - `enemy_retreat`
