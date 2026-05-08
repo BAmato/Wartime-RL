@@ -65,7 +65,7 @@ class CurriculumConfig:
         Pass Curriculum_leve=0/1/2 into wartime_env to select phase
         Advance phases based on win rate over a rolloing window of episodes
     """
-    phases: list= field(default_factory=lambda:[
+    phase: list= field(default_factory=lambda:[
         CurriculumPhase(
             name="Beginner",
             max_steps=100,
@@ -95,4 +95,45 @@ class CurriculumConfig:
     advance_win_rate: float=0.70
     #number of recent episodes to measure win rate over
     eval_window: int=50
+
+class CurriculumTracker:
+    """Tracks episode outcomes and decides when to advance the curriculum
+    Used in training loop
+    """
+    def __init__(self, env, cfg:CurriculumConfig=None):
+        self.env=env
+        self.cfg=cfg or CurriculumConfig()
+        self._history:list[str]=[]
+    
+    def record(self, outcome:str)->bool:
+        """Record an episode outcome and advance the phase if ready"""
+        self._history.append(outcome)
+        if len(self._history)<self.cfg.eval_window:
+            return False
+        # win_rate=self._history.count("win") / len(self._history)
+        win_rate=self.win_rate()
+        max_level=len(self.cfg.phase)-1
+
+        if win_rate>=self.cfg.advance_win_rate and self.env.curriculum_level < max_level:
+            self.env.curriculum_level+=1
+            self._history.clear()
+            print(f"[Curriculum] Win rate {win_rate:.0%} >= {self.cfg.advance_win_rate:.0%} "
+                  f"— advanced to level {self.env.curriculum_level} "
+                  f"({self.cfg.phase[self.env.curriculum_level].name})")
+            return True
+        return False
+    
+    def win_rate(self)->float:
+        """Current Win Rate over the last eval_window episodes"""
+        if not self._history:
+            return 0.0
+        return self._history.count("win") / len(self._history)
+    
+    def __repr__(self)->str:
+        phase=self.cfg.phase[self.env.curriculum_level]
+        return (f"CurriculumTracker(level={self.env.curriculum_level}, "
+                f"phase={phase.name}, "
+                f"win_rate={self.win_rate:.0%}, "
+                f"episodes={len(self._history)}/{self.cfg.eval_window})")
+
 
