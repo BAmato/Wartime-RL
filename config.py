@@ -63,7 +63,7 @@ class CurriculumPhase:
 class CurriculumConfig:
     """Ordered list of curriculum phases
         Pass Curriculum_leve=0/1/2 into wartime_env to select phase
-        Advance phases based on win rate over a rolloing window of episodes
+        Advance phases based on win rate over a rolling window of episodes
     """
     phase: list= field(default_factory=lambda:[
         CurriculumPhase(
@@ -73,7 +73,7 @@ class CurriculumConfig:
             enemy_start_armies=2,
             n_neutral_armies=1,
             random_event_prob=0.05,
-            ),
+        ),
         CurriculumPhase(
             name="Intermediate",
             max_steps=150,
@@ -91,7 +91,7 @@ class CurriculumConfig:
             random_event_prob=0.15,
         )
     ])
-    #win rate threashold to advance to next phase
+    #win rate threshold to advance to next phase
     advance_win_rate: float=0.70
     #number of recent episodes to measure win rate over
     eval_window: int=50
@@ -133,7 +133,7 @@ class CurriculumTracker:
         phase=self.cfg.phase[self.env.curriculum_level]
         return (f"CurriculumTracker(level={self.env.curriculum_level}, "
                 f"phase={phase.name}, "
-                f"win_rate={self.win_rate:.0%}, "
+                f"win_rate={self.win_rate():.0%}, "
                 f"episodes={len(self._history)}/{self.cfg.eval_window})")
 
 

@@ -65,7 +65,7 @@ while True:
     episode_steps+=1
 
     #DEBUG STEP_LEVEL
-    # print(f"step={info['step']:3d} \naction={action:3d} \nreward={reward:+.2f} \nagent={info['agent_territories']}\nenemy={info['enemy_territories']} \nevent={info['event']}")
+    print(f"step={info['step']:3d} \naction={action:3d} \nreward={reward:+.2f} \nagent={info['agent_territories']}\nenemy={info['enemy_territories']} \nevent={info['event']}")
     
     if terminated or truncated:
         outcome="WIN" if info["enemy_territories"]==0 else "LOSS" if info["agent_territories"]==0 else "TIMEOUT"

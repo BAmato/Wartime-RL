@@ -19,7 +19,7 @@ class WartimeEnv(gym.Env):
         super().__init__()
         self.render_mode = render_mode
         self.attack_bonus = False
-        self.cfg = reward_cfg or RewardConfig
+        self.cfg = reward_cfg or RewardConfig()
         self.curriculum = curriculum_cfg or CurriculumConfig()
 
         self.curriculum_level=max(0,min(curriculum_level, len(self.curriculum.phase)-1))
@@ -55,15 +55,24 @@ class WartimeEnv(gym.Env):
 
         # Agent starts in Alaska
         self.state["Alaska"]["owner"] = "agent"
-        self.state["Alaska"]["armies"] = 3
+        self.state["Alaska"]["armies"] = phase.agent_start_armies
 
         # Enemy starts in Argentina
         self.state["Argentina"]["owner"] = "enemy"
-        self.state["Argentina"]["armies"] = 3
+        self.state["Argentina"]["armies"] = phase.enemy_start_armies
+
+        neutral_names=[
+            name for name in TERRITORIES
+            if self.state[name]["owner"]=="neutral"
+        ]
+        boosted=self.np_random.choice(neutral_names, size=min(phase.n_neutral_armies, len(neutral_names)), replace=False)
+        for name in boosted:
+            self.state[name]["armies"]=2
 
         self.steps = 0
-        self.max_steps = 200
+        self.max_steps = phase.max_steps
         self.attack_bonus = False
+        self._continents_awarded:set=set()
 
         return self._get_obs(), {}
 
@@ -133,7 +142,7 @@ class WartimeEnv(gym.Env):
         # Check lose condition - agent has no territories left
         agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
         if len(agent_territories) == 0:
-            reward -= self.cfg.lose_game
+            reward += self.cfg.lose_game
             terminated = True
 
         agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
@@ -175,11 +184,13 @@ class WartimeEnv(gym.Env):
     def _apply_continent_bonus(self):
         bonus = 0.0
         for cont, data in CONTINENTS.items():
-            owners = [self.state[t]["owner"] for t in data["territories"]]
-            if all(o == "agent" for o in owners):
+            if cont in self._continents_awarded:
+                continue
+            owners=[self.state[t]["owner"] for t in data["territories"]]
+            if all(o=="agent" for o in owners):
                 for t in data["territories"]:
-                    self.state[t]["armies"] += 1
-                bonus += data["bonus_armies"] * self.cfg.continent_scale
+                    self.state[t]["territories"]+=1
+                bonus+=data["bonus_armies"]*self.cfg.continent_scale
         return bonus
 
     # -------------------------------------------------------------------------
@@ -235,7 +246,7 @@ class WartimeEnv(gym.Env):
                     break
 
         if best_src and best_tgt:
-            if self._resolve_combat(attacker_dice=1, defender_dice=2):
+            if self._resolve_combat(attacker_dice=2, defender_dice=1):
                 self.state[best_tgt]["owner"] = "enemy"
                 self.state[best_tgt]["armies"] = 1
                 self.state[best_src]["armies"] -= 1
@@ -252,7 +263,7 @@ class WartimeEnv(gym.Env):
     # -------------------------------------------------------------------------
     def _random_event(self):
         phase=self.curriculum.phase[self.curriculum_level]
-        if self.np_random.random() > 0.10:
+        if self.np_random.random() > phase.random_event_prob:
             return 0.0, "No event"
 
         events = ["supply_drop", "enemy_retreat", "ambush", "reinforcements"]
