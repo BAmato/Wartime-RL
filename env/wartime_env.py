@@ -9,15 +9,17 @@ from env.map_config import (
     TERRITORY_COLORS, OWNER_TINT,
     SPRITE_W, SPRITE_H, WIN_W, WIN_H
 )
+from config import RewardConfig, CurriculumConfig
 
 
 class WartimeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"]}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, reward_cfg: RewardConfig=None):
         super().__init__()
         self.render_mode = render_mode
         self.attack_bonus = False
+        self.cfg = reward_cfg or RewardConfig
 
         # Observation: for each territory [owner (0-2), armies (normalized)]
         self.observation_space = spaces.Box(
@@ -74,19 +76,19 @@ class WartimeEnv(gym.Env):
 
         # Validate action - agent must own src and have 2+ armies
         if self.state[src]["owner"] != "agent" or self.state[src]["armies"] < 2:
-            reward = -0.1  # invalid action penalty
+            reward += self.cfg.invalid_action  # invalid action penalty
         else:
             tgt_owner = self.state[tgt]["owner"]
 
             if tgt_owner == "agent":
-                reward = -0.05  # attacking own territory
+                reward += self.cfg.friendly_fire  # attacking own territory
 
             elif tgt_owner == "neutral":
                 # Capture neutral territory
                 self.state[tgt]["owner"] = "agent"
                 self.state[tgt]["armies"] = 1
                 self.state[src]["armies"] -= 1
-                reward = +1.0
+                reward += self.cfg.capture_neutral
 
             elif tgt_owner == "enemy":
                 # Combat via dice roll
@@ -96,13 +98,13 @@ class WartimeEnv(gym.Env):
                     self.state[tgt]["owner"] = "agent"
                     self.state[tgt]["armies"] = 1
                     self.state[src]["armies"] -= 1
-                    reward = +3.0
+                    reward += self.cfg.win_combat
                 else:
                     # Agent loses
                     self.state[src]["armies"] -= 1
                     if self.state[src]["armies"] < 1:
                         self.state[src]["armies"] = 1
-                    reward = -3.0
+                    reward += self.cfg.lose_combat
 
             self.attack_bonus = False
 
@@ -110,22 +112,23 @@ class WartimeEnv(gym.Env):
         reward += self._apply_continent_bonus()
 
         # Survival bonus
-        reward += 0.1
+        reward += self.cfg.survival
 
         # Check win condition - enemy has no territories left
         enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
         if len(enemy_territories) == 0:
-            reward += 20.0
+            reward += self.cfg.win_game
             terminated = True
 
         # Enemy takes its turn
-        enemy_reward = self._enemy_turn()
-        reward += enemy_reward
+        if not terminated: 
+            enemy_reward = self._enemy_turn()
+            reward += enemy_reward
 
         # Check lose condition - agent has no territories left
         agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
         if len(agent_territories) == 0:
-            reward -= 10.0
+            reward -= self.cfg.lose_game
             terminated = True
 
         # Random event
@@ -156,7 +159,7 @@ class WartimeEnv(gym.Env):
             if all(o == "agent" for o in owners):
                 for t in data["territories"]:
                     self.state[t]["armies"] += 1
-                bonus += data["bonus_armies"] * 0.5
+                bonus += data["bonus_armies"] * self.cfg.continent_scale
         return bonus
 
     # -------------------------------------------------------------------------
@@ -240,7 +243,7 @@ class WartimeEnv(gym.Env):
             if agent_territories:
                 idx = self.np_random.integers(0, len(agent_territories))
                 self.state[agent_territories[idx]]["armies"] += 2
-                reward = +1.0
+                reward = self.cfg.supply_drop
 
         elif event == "enemy_retreat":
             enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
@@ -255,7 +258,7 @@ class WartimeEnv(gym.Env):
 
         elif event == "reinforcements":
             self.attack_bonus = True
-            reward = +0.5
+            reward = self.cfg.reinforcements
 
         return reward, event
 
@@ -335,7 +338,3 @@ class WartimeEnv(gym.Env):
             pygame.quit()
             self._screen = None
 
-    def close(self):
-        if self._screen is not None:
-            pygame.quit()
-            self._screen = None
