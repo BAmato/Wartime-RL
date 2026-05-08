@@ -9,17 +9,20 @@ from env.map_config import (
     TERRITORY_COLORS, OWNER_TINT,
     SPRITE_W, SPRITE_H, WIN_W, WIN_H
 )
-from config import RewardConfig
+from config import RewardConfig, CurriculumConfig
 
 
 class WartimeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"]}
 
-    def __init__(self, render_mode=None, reward_cfg: RewardConfig=None):
+    def __init__(self, render_mode=None, reward_cfg: RewardConfig=None, curriculum_cfg:CurriculumConfig=None, curriculum_level:int=0):
         super().__init__()
         self.render_mode = render_mode
         self.attack_bonus = False
         self.cfg = reward_cfg or RewardConfig
+        self.curriculum = curriculum_cfg or CurriculumConfig()
+
+        self.curriculum_level=max(0,min(curriculum_level, len(self.curriculum.phase)-1))
 
         # Observation: for each territory [owner (0-2), armies (normalized)]
         self.observation_space = spaces.Box(
@@ -41,6 +44,8 @@ class WartimeEnv(gym.Env):
     # -------------------------------------------------------------------------
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+
+        phase=self.curriculum.phase[self.curriculum_level]
 
         # Initialize all territories as neutral with 1 army
         self.state = {
@@ -131,6 +136,11 @@ class WartimeEnv(gym.Env):
             reward -= self.cfg.lose_game
             terminated = True
 
+        agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
+        enemy_territories  = [n for n, d in self.state.items() if d["owner"] == "enemy"]
+ 
+        phase = self.curriculum.phase[self.curriculum_level]
+
         # Random event
         event_reward, event = self._random_event()
         reward += event_reward
@@ -141,7 +151,8 @@ class WartimeEnv(gym.Env):
             "agent_territories": len(agent_territories),
             "enemy_territories": len(enemy_territories),
             "attack_bonus_active": self.attack_bonus,
-
+            "curriculum_level": self.curriculum_level,
+            "curriculum_phase": phase.name,
         }
 
         return self._get_obs(), reward, terminated, truncated, info
@@ -240,6 +251,7 @@ class WartimeEnv(gym.Env):
     # RANDOM EVENTS
     # -------------------------------------------------------------------------
     def _random_event(self):
+        phase=self.curriculum.phase[self.curriculum_level]
         if self.np_random.random() > 0.10:
             return 0.0, "No event"
 
