@@ -9,7 +9,7 @@ from env.map_config import (
     TERRITORY_COLORS, OWNER_TINT,
     SPRITE_W, SPRITE_H, WIN_W, WIN_H
 )
-from config import RewardConfig, CurriculumConfig
+from config import RewardConfig
 
 
 class WartimeEnv(gym.Env):
@@ -132,10 +132,19 @@ class WartimeEnv(gym.Env):
             terminated = True
 
         # Random event
-        event_reward, _ = self._random_event()
+        event_reward, event = self._random_event()
         reward += event_reward
 
-        return self._get_obs(), reward, terminated, truncated, {}
+        info={
+            "step": self.steps,
+            "event": event,
+            "agent_territories": len(agent_territories),
+            "enemy_territories": len(enemy_territories),
+            "attack_bonus_active": self.attack_bonus,
+
+        }
+
+        return self._get_obs(), reward, terminated, truncated, info
 
     # -------------------------------------------------------------------------
     # OBSERVATION
@@ -219,7 +228,7 @@ class WartimeEnv(gym.Env):
                 self.state[best_tgt]["owner"] = "enemy"
                 self.state[best_tgt]["armies"] = 1
                 self.state[best_src]["armies"] -= 1
-                reward = -3.0
+                reward = self.cfg.lose_combat
             else:
                 self.state[best_src]["armies"] -= 1
                 if self.state[best_src]["armies"] < 1:
