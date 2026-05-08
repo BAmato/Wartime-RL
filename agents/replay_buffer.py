@@ -23,11 +23,15 @@ class ReplayBuffer:
         device: torch.device
             Device for sampled tensors. Should run on cuda if your DQN runs on GPU
     """
-    def __init__(self, capasity: int, obs_dim: int, device: torch.device="gpu")-> None:
+    def __init__(self, capasity: int, obs_dim: int, device: torch.device | str| None=None)-> None:
         self.capacity=capasity
         self.obs_dim=obs_dim
-        self.device=torch.device(device)
 
+        if device is None:
+            self.device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device=torch.device(device)
+        
         # Pre-allocate storage arrays
         self._obs=np.zeros((self.capacity, self.obs_dim), dtype=np.float32)
         self._next_obs=np.zeros((self.capacity, self.obs_dim), dtype=np.float32)
@@ -59,7 +63,7 @@ class ReplayBuffer:
                 f"Buffer has only {self._size} transitions"
                 f"cannot sample batch of {batch_size}"
             )
-        idxs=np.random.randint(0, self._size, seize=batch_size)
+        idxs=np.random.randint(0, self._size, size=batch_size)
         def t(arr:np.ndarray)->torch.Tensor:
             return torch.from_numpy(arr[idxs]).to(self.device)
         return (
@@ -78,7 +82,7 @@ class ReplayBuffer:
     
     def ready_for(self, batch_size:int)->bool:
         """True once the buffer holds enough transitions to sample 'batch_size'"""
-        return self._size>-batch_size
+        return self._size>=batch_size
     
     def __repr__(self)->str:
         return (
