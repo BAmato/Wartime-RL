@@ -1,0 +1,18 @@
+name: wartime-rl
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - matplotlib
+  - pygame
+  - pip:
+    - torch
+    - torchvision
+    - torchaudio
+    - gymnasium
+    - tensorboard
+    - tqdm
+    - pillow
