@@ -15,8 +15,8 @@ class RewardConfig:
     Tweak these instead of inside env
     """
     #invalid/ wasteful actions
-    invalid_action: float= -0.01
-    friendly_fire: float= -0.05
+    invalid_action: float= -0.5
+    friendly_fire: float= -0.5
 
     #territory actions
     capture_neutral: float= +1.0
@@ -24,7 +24,7 @@ class RewardConfig:
     lose_combat: float= -3.0
 
     #per-step signals
-    survival: float= +0.01
+    survival: float= +0.0001
     continent_scale: float= +0.5
 
     #terminal outcomes

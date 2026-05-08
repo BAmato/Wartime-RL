@@ -17,7 +17,9 @@ RENDER_FPS=10
 
 #SETUP
 
-env = WartimeEnv(render_mode="human")
+env = WartimeEnv(render_mode="human", curriculum_level=0) #Beginner
+# env = WartimeEnv(render_mode="human", curriculum_level=1) #Intermediate
+# env = WartimeEnv(render_mode="human", curriculum_level=2) #Hard
 obs, _ = env.reset()
 
 env.render()
@@ -30,6 +32,7 @@ print(f"\n{'='*55}")
 print("    WarTime-RL -- Agent Check")
 print(f"     Action space : {env.action_space}")
 print(f"    OBS shape : {env.observation_space.shape}")
+print(f"    Curriculum Level: {env.curriculum_level}")
 print(f"\n{'='*55}")
 
 #MAIN LOOP
@@ -62,7 +65,7 @@ while True:
     episode_steps+=1
 
     #DEBUG STEP_LEVEL
-    print(f"step={info['step']:3d} \naction={action:3d} \nreward={reward:+.2f} \nagent={info['agent_territories']}\nenemy={info['enemy_territories']} \nevent={info['event']}")
+    # print(f"step={info['step']:3d} \naction={action:3d} \nreward={reward:+.2f} \nagent={info['agent_territories']}\nenemy={info['enemy_territories']} \nevent={info['event']}")
     
     if terminated or truncated:
         outcome="WIN" if info["enemy_territories"]==0 else "LOSS" if info["agent_territories"]==0 else "TIMEOUT"
