@@ -126,23 +126,24 @@ class WartimeEnv(gym.Env):
             action_type, action_reward, combat_result, turn_ended = self._handle_attack_action(action)
             reward += action_reward
 
-            if turn_ended:
-                self.attack_bonus = False
-                enemy_territories = self._owned_territories("enemy")
-                if len(enemy_territories) == 0:
-                    reward += self.cfg.win_game
-                    terminated = True
+            # Check win condition after every attack, not just on pass
+            enemy_territories = self._owned_territories("enemy")
+            if len(enemy_territories) == 0:
+                reward += self.cfg.win_game
+                terminated = True
 
-                if not terminated:
-                    if self._agent_has_fortify_targets():
-                        self.turn_phase = self.PHASE_FORTIFY
-                    else:
-                        end_r, terminated, event, enemy_reinforcements, lost_territory = (
-                            self._end_player_turn()
-                        )
-                        reward += end_r
-                        if lost_territory:
-                            combat_result = "lose_territory"
+            if turn_ended and not terminated:
+                self.turns += 1
+                self.attack_bonus = False
+                if self._agent_has_fortify_targets():
+                    self.turn_phase = self.PHASE_FORTIFY
+                else:
+                    end_r, terminated, event, enemy_reinforcements, lost_territory = (
+                        self._end_player_turn()
+                    )
+                    reward += end_r
+                    if lost_territory:
+                        combat_result = "lose_territory"
 
         elif self.turn_phase == self.PHASE_FORTIFY:
             action_type, action_reward, turn_ended, fortify_source, fortify_target = (
