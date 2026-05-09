@@ -62,12 +62,12 @@ def train():
         writer.writerow(["# rollout_steps", ppo_cfg.rollout_steps])
         writer.writerow(["# batch_size", ppo_cfg.batch_size])
         writer.writerow(["# n_epochs", ppo_cfg.n_epochs])
-        writer.writerow(["# beginner_max_steps", cur_cfg.phase[0].max_steps])
+        writer.writerow(["# beginner_max_turns", cur_cfg.phase[0].max_turns])
         writer.writerow(["# beginner_agent_armies", cur_cfg.phase[0].agent_start_armies])
         writer.writerow(["# beginner_enemy_armies", cur_cfg.phase[0].enemy_start_armies])
         writer.writerow([])
         writer.writerow([
-            "episode", "global_step", "outcome", "ep_steps", "reward",
+            "episode", "global_step", "outcome", "ep_steps", "turns", "reward",
             "agent_terr", "enemy_terr", "curriculum_level",
         ])
 
@@ -121,6 +121,7 @@ def train():
                 with open(log_path, "a", newline="") as f:
                     csv.writer(f).writerow([
                         episode, global_step, outcome, ep_steps,
+                        info.get("turns", 0),
                         f"{ep_reward:.2f}", info["agent_territories"],
                         info["enemy_territories"], raw_env.curriculum_level,
                     ])

@@ -92,7 +92,6 @@ class WartimeEnv(gym.Env):
         self.steps += 1
         reward = 0.0
         terminated = False
-        truncated = self.steps >= self.max_steps
 
         event = "No event"
         action_type = "none"
@@ -107,6 +106,7 @@ class WartimeEnv(gym.Env):
             agent_reinforcements = self._handle_deploy_action(action)
             if agent_reinforcements:
                 action_type = "deploy"
+                reward += self.cfg.deploy
 
         elif self.turn_phase == self.PHASE_ATTACK:
             action_type, action_reward, combat_result, turn_ended = self._handle_attack_action(action)
@@ -139,8 +139,11 @@ class WartimeEnv(gym.Env):
                     self._end_player_turn()
                 )
                 reward += end_r
+                if lost_territory:
+                    combat_result = "lose_territory"
 
         reward += self.cfg.survival
+        truncated = self.turns >= self.max_turns
 
         agent_territories = self._owned_territories("agent")
         enemy_territories = self._owned_territories("enemy")
@@ -148,8 +151,10 @@ class WartimeEnv(gym.Env):
 
         info = {
             "step": self.steps,
+            "turns": self.turns,
             "event": event,
             "action_type": action_type,
+            "combat_result": combat_result,
             "turn_phase": self.turn_phase,
             "combat_result": combat_result,
             "border_pressure": border_pressure_val,
@@ -196,6 +201,7 @@ class WartimeEnv(gym.Env):
         mask = np.zeros(self.action_space.n, dtype=bool)
 
         if self.turn_phase == self.PHASE_REINFORCE:
+            # Pass is not valid during reinforce — agent must place all armies.
             for idx, name in enumerate(TERRITORIES):
                 if self._can_deploy_to(name):
                     mask[idx] = True
@@ -247,7 +253,8 @@ class WartimeEnv(gym.Env):
         event = "No event"
 
         enemy_reinforcements = self._assign_enemy_reinforcements()
-        reward += self._enemy_turn()
+        enemy_reward, lost_territory = self._enemy_turn()
+        reward += enemy_reward
 
         agent_territories = self._owned_territories("agent")
         if len(agent_territories) == 0:
@@ -298,10 +305,32 @@ class WartimeEnv(gym.Env):
 
         self.state[territory]["armies"] += 1
         self.pending_reinforcements -= 1
-        if self.pending_reinforcements == 0 or not self._agent_has_deploy_targets():
+
+        if self.pending_reinforcements == 0:
             self.turn_phase = self.PHASE_ATTACK
-            self.pending_reinforcements = 0
+        elif not self._agent_has_deploy_targets():
+            # All territories at capacity — drain remainder automatically.
+            self._drain_pending_reinforcements()
+            self.turn_phase = self.PHASE_ATTACK
+
         return 1
+
+    def _drain_pending_reinforcements(self):
+        """Auto-place remaining armies on the least-full owned territory."""
+        owned = self._owned_territories("agent")
+        if not owned:
+            self.pending_reinforcements = 0
+            return
+        while self.pending_reinforcements > 0:
+            target = min(owned, key=lambda n: self.state[n]["armies"])
+            if self.state[target]["armies"] >= self.gameplay.max_armies_per_territory:
+                self.pending_reinforcements = 0
+                break
+            self.state[target]["armies"] = min(
+                self.state[target]["armies"] + 1,
+                self.gameplay.max_armies_per_territory,
+            )
+            self.pending_reinforcements -= 1
 
     def _handle_attack_action(self, action):
         if action == self.pass_action:
@@ -340,7 +369,7 @@ class WartimeEnv(gym.Env):
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src, attacker_dice)
             self.state[tgt]["armies"] = moved
-            return self.cfg.capture_neutral, "none"
+            return self.cfg.capture_neutral, "neutral_capture"
 
         attacker_losses, defender_losses = self._resolve_combat(attacker_dice, src, tgt)
         self._remove_armies(src, attacker_losses)
@@ -351,10 +380,10 @@ class WartimeEnv(gym.Env):
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src, attacker_dice)
             self.state[tgt]["armies"] = moved
-            return self.cfg.win_combat, "win"
+            return self.cfg.win_combat, "win_territory"
 
         self.state[tgt]["armies"] = remaining_defender
-        return self.cfg.lose_combat, "loss"
+        return self.cfg.lose_combat, "lose_combat"
 
     def _resolve_fortify(self, src, tgt):
         available = self.state[src]["armies"] - 1
@@ -394,7 +423,6 @@ class WartimeEnv(gym.Env):
         self.attacked_this_turn = False
         if self.pending_reinforcements == 0 or not self._agent_has_deploy_targets():
             self.turn_phase = self.PHASE_ATTACK
-            self.pending_reinforcements = 0
 
 
     def _can_deploy_to(self, territory):
@@ -530,7 +558,10 @@ class WartimeEnv(gym.Env):
     # ENEMY AI
     # -------------------------------------------------------------------------
     def _enemy_turn(self):
+        """Returns (reward, lost_territory) where lost_territory is True if the
+        enemy captured a territory that was owned by the agent."""
         reward = 0.0
+        lost_territory = False
 
         enemy_srcs = [
             name for name, d in self.state.items()
@@ -545,7 +576,7 @@ class WartimeEnv(gym.Env):
                     self.state[target]["armies"] + 1,
                     self.gameplay.max_armies_per_territory,
                 )
-            return reward
+            return reward, lost_territory
 
         best_src, best_tgt = None, None
         for src in enemy_srcs:
@@ -570,6 +601,7 @@ class WartimeEnv(gym.Env):
                     break
 
         if best_src and best_tgt:
+            tgt_was_agent = self.state[best_tgt]["owner"] == "agent"
             src_armies = self.state[best_src]["armies"]
             enemy_attacker_dice = self._attacker_dice_count(src_armies)
 
@@ -584,11 +616,15 @@ class WartimeEnv(gym.Env):
                 self.state[best_tgt]["armies"] = 0
                 moved = self._move_armies_after_capture(best_src, enemy_attacker_dice)
                 self.state[best_tgt]["armies"] = moved
-                reward = self.cfg.lose_combat
+                if tgt_was_agent:
+                    reward = self.cfg.lose_combat + self.cfg.lose_territory
+                    lost_territory = True
+                else:
+                    reward = self.cfg.lose_combat
             else:
                 self.state[best_tgt]["armies"] = remaining_defender
 
-        return reward
+        return reward, lost_territory
 
     # -------------------------------------------------------------------------
     # RANDOM EVENTS
@@ -623,7 +659,8 @@ class WartimeEnv(gym.Env):
                 )
 
         elif event == "ambush":
-            reward += self._enemy_turn()
+            ambush_reward, _ = self._enemy_turn()
+            reward += ambush_reward
 
         elif event == "reinforcements":
             self.attack_bonus = True
@@ -847,13 +884,18 @@ class WartimeEnv(gym.Env):
 
         y = metric("Phase", phase, y, phase_color)
         y = metric("Pending", info.get("pending_reinforcements", self.pending_reinforcements), y)
-        y = metric("Step", info.get("step", self.steps), y)
+        y = metric("Turns", info.get("turns", self.turns), y)
         y = metric("Agent terr", info.get("agent_territories", len(self._owned_territories("agent"))), y)
         y = metric("Enemy terr", info.get("enemy_territories", len(self._owned_territories("enemy"))), y)
+        y = metric("Curr level", info.get("curriculum_level", self.curriculum_level), y)
+        y = metric("Curr phase", info.get("curriculum_phase", ""), y)
 
         y = draw_section("Action", y)
         y = metric("Last", hud.get("action_label", "none"), y)
         y = metric("Type", info.get("action_type", "none"), y)
+        y = metric("Combat", info.get("combat_result", "none"), y)
+        y = metric("Fortify src", info.get("fortify_source") or "none", y)
+        y = metric("Fortify tgt", info.get("fortify_target") or "none", y)
         for entry in hud.get("action_log", [])[-4:]:
             y = draw_text(entry, panel_x + padding, y, (205, 214, 224), max_width=content_w)
 

@@ -192,7 +192,7 @@ while True:
 
     # DEBUG STEP_LEVEL
     print(
-        f"step={info['step']:3d} \n"
+        f"turns={info['turns']:3d} step={info['step']:3d} \n"
         f"action={action:3d} ({action_label}) \n"
         f"phase={info['turn_phase']} pending={info['pending_reinforcements']} \n"
         f"reward={reward:+.2f} \n"
@@ -216,7 +216,7 @@ while True:
         )
 
         print(f"  Episode {episode:3d} | {outcome:7s} | "
-              f"steps={episode_steps:3d} | "
+              f"turns={info['turns']:3d} steps={episode_steps:3d} | "
               f"total_reward={episode_reward:+7.2f} | "
               f"agent_terr={info['agent_territories']:2d} | "
               f"enemy_terr={info['enemy_territories']:2d}")

@@ -90,18 +90,18 @@ def train():
         writer.writerow(["# grad_clip", cfg.grad_clip])
         writer.writerow(["# batch_size", cfg.batch_size])
         writer.writerow(["# replay_capacity", cfg.replay_capacity])
-        writer.writerow(["# beginner_max_steps", cur_cfg.phase[0].max_steps])
+        writer.writerow(["# beginner_max_turns", cur_cfg.phase[0].max_turns])
         writer.writerow(["# beginner_agent_armies", cur_cfg.phase[0].agent_start_armies])
         writer.writerow(["# beginner_enemy_armies", cur_cfg.phase[0].enemy_start_armies])
         writer.writerow(["# reward_clip", "none"])
         writer.writerow([])  # blank line separator
         # Column headers
         writer.writerow([
-            "episode", "global_step", "outcome", "ep_steps", "reward",
+            "episode", "global_step", "outcome", "ep_steps", "turns", "reward",
             "agent_terr", "enemy_terr", "epsilon", "curriculum_level", "mean_loss",
             "agent_armies", "enemy_armies",
             "phase_reinforce", "phase_attack", "phase_fortify",
-            "combat_wins", "combat_losses", "fortify_count",
+            "combat_wins", "combat_losses", "territory_losses", "fortify_count",
             "continents", "final_state",
         ])
 
@@ -115,6 +115,7 @@ def train():
     phase_counts = {"reinforce": 0, "attack": 0, "fortify": 0}
     combat_wins = 0
     combat_losses = 0
+    territory_losses = 0
     fortify_count = 0
 
     obs, _ = env.reset()
@@ -134,11 +135,13 @@ def train():
         phase_counts[info.get("turn_phase", "attack")] = (
             phase_counts.get(info.get("turn_phase", "attack"), 0) + 1
         )
-        if info.get("action_type") == "attack":
-            if info.get("combat_result") == "win":
-                combat_wins += 1
-            elif info.get("combat_result") == "loss":
-                combat_losses += 1
+        cr = info.get("combat_result", "none")
+        if cr == "win_territory":
+            combat_wins += 1
+        elif cr == "lose_combat":
+            combat_losses += 1
+        elif cr == "lose_territory":
+            territory_losses += 1
         if info.get("action_type") == "fortify":
             fortify_count += 1
 
@@ -166,12 +169,13 @@ def train():
             with open(log_path, "a", newline="") as f:
                 csv.writer(f).writerow([
                     episode, agent.total_steps, outcome, ep_steps,
+                    info.get("turns", 0),
                     f"{ep_reward:.2f}", info["agent_territories"],
                     info["enemy_territories"], f"{agent.epsilon():.4f}",
                     raw_env.curriculum_level, f"{mean_loss:.6f}",
                     agent_armies, enemy_armies,
                     phase_counts["reinforce"], phase_counts["attack"], phase_counts["fortify"],
-                    combat_wins, combat_losses, fortify_count,
+                    combat_wins, combat_losses, territory_losses, fortify_count,
                     encode_continents(raw_env),
                     encode_final_state(raw_env),
                 ])
@@ -192,6 +196,7 @@ def train():
             phase_counts = {"reinforce": 0, "attack": 0, "fortify": 0}
             combat_wins = 0
             combat_losses = 0
+            territory_losses = 0
             fortify_count = 0
 
     env.close()

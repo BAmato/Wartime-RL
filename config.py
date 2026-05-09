@@ -1,10 +1,10 @@
 """
 config.py
-All reward weights, training hyperparameters, and 
-curriculum settings live here. They can be changed here in one place instead of hardcoding 
+All reward weights, training hyperparameters, and
+curriculum settings live here. They can be changed here in one place instead of hardcoding
 agent code
 
-Author: Damian Villarreal
+Author: Damian Villarreal, Bryan Amato
 """
 
 from dataclasses import dataclass, field
@@ -16,9 +16,12 @@ class RewardConfig:
     Tweak these instead of inside env
     """
 
-    capture_neutral: float = +1.0
-    win_combat: float = +2.0
-    lose_combat: float = -1.0      # was -3.0 — too punishing
+    capture_neutral: float = +3.0   # was +1.0
+    win_combat: float = +5.0    # was +2.0
+    lose_combat: float = -1.0      # dice loss without territory change
+    lose_territory: float = -5.0   # applied when enemy captures an agent territory
+    deploy: float = +0.05          # per army placed during reinforce phase
+    pass_attack: float = -2.0  # was -0.5 — much stronger penalty
 
     border_pressure: float = -0.1   # penalty per turn based on enemy army ratio at borders
     defensive_fortify: float = +0.3  # reward for fortifying a territory adjacent to an enemy
@@ -28,9 +31,10 @@ class RewardConfig:
 
     win_game: float = +20.0
     lose_game: float = -20.0       # was -40.0 — match the win reward
-    
+
     supply_drop: float = +1.0
     reinforcements: float = +0.5
+
 
 @dataclass
 class GameplayConfig:
@@ -56,7 +60,7 @@ class TrainingConfig:
     tau: float = 0.01
     eps_start: float = 1.0
     eps_end: float = 0.05
-    eps_decay: int = 50_000
+    eps_decay: int = 20_000
     grad_clip: float = 10.0
 
 
@@ -64,7 +68,7 @@ class TrainingConfig:
 class CurriculumPhase:
     """Defines one difficulty phase of training"""
     name: str
-    max_steps: int
+    max_turns: int
     agent_start_armies: int
     enemy_start_armies: int
     n_neutral_armies: int
@@ -80,7 +84,7 @@ class CurriculumConfig:
     phase: list = field(default_factory=lambda: [
         CurriculumPhase(
             name="Beginner",
-            max_steps=300,
+            max_turns=30,
             agent_start_armies=8,
             enemy_start_armies=1,
             n_neutral_armies=1,
@@ -88,7 +92,7 @@ class CurriculumConfig:
         ),
         CurriculumPhase(
             name="Intermediate",
-            max_steps=150,
+            max_turns=25,
             agent_start_armies=3,
             enemy_start_armies=3,
             n_neutral_armies=1,
@@ -96,7 +100,7 @@ class CurriculumConfig:
         ),
         CurriculumPhase(
             name="Hard",
-            max_steps=200,
+            max_turns=20,
             agent_start_armies=3,
             enemy_start_armies=5,
             n_neutral_armies=2,

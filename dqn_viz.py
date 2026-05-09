@@ -14,6 +14,7 @@ Arguments:
 Expected CSV columns:
     episode, global_step, outcome, ep_steps, reward,
     agent_terr, enemy_terr, epsilon, curriculum_level, mean_loss
+    Optional: turns (full agent turns per episode)
 """
 
 import argparse
@@ -38,6 +39,7 @@ C_TIMEOUT = "#ffd166"   # yellow
 C_SMOOTH  = "#ffffff"
 C_LOSS_CURVE = "#a78bfa"  # purple
 C_STEPS   = "#74b9ff"   # blue
+C_TURNS   = "#a8e6cf"   # mint
 C_AGENT   = "#4ecdc4"
 C_ENEMY   = "#ff6b6b"
 C_EPSILON = "#fdcb6e"
@@ -98,6 +100,11 @@ def build_dashboard(df: pd.DataFrame, window: int, xaxis: str, save: str | None)
     x      = df["global_step"] if xaxis == "step" else df["episode"]
     xlabel = "Global Step" if xaxis == "step" else "Episode"
 
+    # Prefer turns column for episode-length plot when available
+    has_turns = "turns" in df.columns
+    length_col = "turns" if has_turns else "ep_steps"
+    length_label = "Turns" if has_turns else "Steps"
+
     rates  = outcome_rates(df, window)
 
     # ── figure layout ─────────────────────────────────────────────────────────
@@ -124,7 +131,6 @@ def build_dashboard(df: pd.DataFrame, window: int, xaxis: str, save: str | None)
     ax_outcome  = fig.add_subplot(gs[2, 2])
 
     # ── 1. Reward curve (primary diagnostic) ─────────────────────────────────
-    # Scatter raw rewards coloured by outcome, overlay smoothed curve + ±1σ band
     for outcome, color in OUTCOME_COLORS.items():
         mask = df["outcome"] == outcome
         ax_reward.scatter(
@@ -166,16 +172,23 @@ def build_dashboard(df: pd.DataFrame, window: int, xaxis: str, save: str | None)
     ax_loss.plot(x, rolling(df["mean_loss"], window), color=C_LOSS_CURVE, linewidth=1.6)
     style_ax(ax_loss, "Mean TD Loss", ylabel="Loss", xlabel=xlabel)
 
-    # ── 4. Episode length ─────────────────────────────────────────────────────
-    # Colour by outcome; timeouts at 300 are a distinct pattern
+    # ── 4. Episode length (turns preferred, steps fallback) ───────────────────
     for outcome, color in OUTCOME_COLORS.items():
         mask = df["outcome"] == outcome
-        ax_steps.scatter(x[mask], df.loc[mask, "ep_steps"],
+        ax_steps.scatter(x[mask], df.loc[mask, length_col],
                          c=color, s=14, alpha=0.5, linewidths=0)
-    ax_steps.plot(x, rolling(df["ep_steps"], window), color=C_STEPS, linewidth=1.5)
-    ax_steps.axhline(df["ep_steps"].max(), color=C_TIMEOUT, linewidth=0.7,
-                     linestyle=":", alpha=0.6, label="Max steps")
-    style_ax(ax_steps, "Episode Length", ylabel="Steps", xlabel=xlabel)
+    ax_steps.plot(x, rolling(df[length_col], window), color=C_TURNS if has_turns else C_STEPS,
+                  linewidth=1.5)
+    ax_steps.axhline(df[length_col].max(), color=C_TIMEOUT, linewidth=0.7,
+                     linestyle=":", alpha=0.6, label=f"Max {length_label.lower()}")
+    # Overlay raw steps as faint secondary line when showing turns
+    if has_turns:
+        ax_steps.plot(x, rolling(df["ep_steps"], window),
+                      color=C_STEPS, linewidth=0.8, alpha=0.4, linestyle="--",
+                      label="Steps (raw)")
+        ax_steps.legend(loc="upper right", fontsize=6.5, framealpha=0.3,
+                        facecolor=PANEL_BG, edgecolor=GRID_COL, labelcolor=TEXT_COL)
+    style_ax(ax_steps, f"Episode Length ({length_label})", ylabel=length_label, xlabel=xlabel)
 
     # ── 5. Territory control ──────────────────────────────────────────────────
     ax_terr.plot(x, rolling(df["agent_terr"], window),
@@ -201,7 +214,6 @@ def build_dashboard(df: pd.DataFrame, window: int, xaxis: str, save: str | None)
     # ── 6. Epsilon (exploration) schedule ─────────────────────────────────────
     ax_epsilon.plot(x, df["epsilon"], color=C_EPSILON, linewidth=1.5)
     ax_epsilon.set_ylim(0, 1.05)
-    # Annotate current epsilon
     ax_epsilon.annotate(
         f"ε = {df['epsilon'].iloc[-1]:.4f}",
         xy=(x.iloc[-1], df["epsilon"].iloc[-1]),
@@ -233,7 +245,6 @@ def build_dashboard(df: pd.DataFrame, window: int, xaxis: str, save: str | None)
                                     color=MUTED_COL, fontsize=7)
         ax_rew_dist.set_xlim(0.4, 3.6)
     except ImportError:
-        # scipy not available: fall back to box plot
         data_by_outcome = [
             df.loc[df["outcome"] == o, "reward"].values
             for o in ("win", "timeout", "loss")
