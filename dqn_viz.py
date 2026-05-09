@@ -295,7 +295,7 @@ def main():
                         help="Output file path (e.g. dashboard.png). Omit to display interactively.")
     args = parser.parse_args()
 
-    df = pd.read_csv(args.csv_path)
+    df = pd.read_csv(args.csv_path, comment="#")
 
     required = {"episode", "global_step", "outcome", "ep_steps", "reward",
                 "agent_terr", "enemy_terr", "epsilon", "curriculum_level", "mean_loss"}

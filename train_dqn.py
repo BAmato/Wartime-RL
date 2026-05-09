@@ -38,7 +38,7 @@ def train():
     cur_cfg = CurriculumConfig()
 
     env = WartimeEnv(render_mode="rgb_array", curriculum_level=args.level)
-    raw_env = env  # keep reference before wrapping
+    raw_env = env  # keep unwrapped reference
     env = RecordVideo(env, video_folder=os.path.join(args.out, "videos"), episode_trigger=lambda ep: ep % 100 == 0)
     env = RecordEpisodeStatistics(env)
     obs_dim = env.observation_space.shape[0]
@@ -83,7 +83,7 @@ def train():
     obs, _ = env.reset()
 
     while agent.total_steps < cfg.total_steps:
-        action = agent.select_action(obs, env=env)
+        action = agent.select_action(obs, env=raw_env)
         next_obs, reward, terminated, truncated, info = env.step(action)
 
         done = terminated or truncated
@@ -112,7 +112,7 @@ def train():
                     episode, agent.total_steps, outcome, ep_steps,
                     f"{ep_reward:.2f}", info["agent_territories"],
                     info["enemy_territories"], f"{agent.epsilon():.4f}",
-                    env.curriculum_level, f"{mean_loss:.6f}",
+                    raw_env.curriculum_level, f"{mean_loss:.6f}",
                 ])
 
             if episode % 100 == 0:
@@ -120,7 +120,7 @@ def train():
                 print(
                     f"Ep {episode:5d} | steps {agent.total_steps:7d} | "
                     f"WR {tracker.win_rate():.1%} | eps {agent.epsilon():.3f} | "
-                    f"loss {mean_loss:.4f} | lvl {env.curriculum_level} | {elapsed:.0f}s"
+                    f"loss {mean_loss:.4f} | lvl {raw_env.curriculum_level} | {elapsed:.0f}s"
                 )
                 
             obs, _ = env.reset()

@@ -38,12 +38,14 @@ def train():
     cur_cfg = CurriculumConfig()
 
     env = WartimeEnv(render_mode="rgb_array", curriculum_level=args.level)
+    raw_env = env
     env = RecordVideo(env, video_folder=os.path.join(args.out, "ppo_videos"), episode_trigger=lambda ep: ep % 100 == 0)
+    env = RecordEpisodeStatistics(env)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
 
     agent = PPOAgent(obs_dim, n_actions, ppo_cfg)
-    tracker = CurriculumTracker(env, cur_cfg)
+    tracker = CurriculumTracker(raw_env, cur_cfg)
 
     os.makedirs(args.out, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -91,7 +93,7 @@ def train():
         val_buf.clear(); logp_buf.clear(); done_buf.clear()
 
         for _ in range(ppo_cfg.rollout_steps):
-            action, log_prob, value = agent.select_action(obs, env=env)
+            action, log_prob, value = agent.select_action(obs, env=raw_env)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 
@@ -100,7 +102,7 @@ def train():
             rew_buf.append(reward)
             val_buf.append(value)
             logp_buf.append(log_prob)
-            done_buf.append(float(done))
+            done_buf.append(float(terminated))
 
             obs = next_obs
             ep_reward += reward
@@ -120,14 +122,14 @@ def train():
                     csv.writer(f).writerow([
                         episode, global_step, outcome, ep_steps,
                         f"{ep_reward:.2f}", info["agent_territories"],
-                        info["enemy_territories"], env.curriculum_level,
+                        info["enemy_territories"], raw_env.curriculum_level,
                     ])
 
                 if episode % 50 == 0:
                     elapsed = time.time() - start
                     print(
                         f"Ep {episode:5d} | steps {global_step:7d} | "
-                        f"WR {tracker.win_rate():.1%} | lvl {env.curriculum_level} | "
+                        f"WR {tracker.win_rate():.1%} | lvl {raw_env.curriculum_level} | "
                         f"{elapsed:.0f}s"
                     )
 
