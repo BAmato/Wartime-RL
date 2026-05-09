@@ -2,37 +2,54 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 import pygame
-import sys
 import os
 from env.map_config import (
     TERRITORIES, CONTINENTS, ATTACK_PAIRS,
-    TERRITORY_COLORS, OWNER_TINT,
     SPRITE_W, SPRITE_H, WIN_W, WIN_H
 )
-from config import RewardConfig, CurriculumConfig
+from config import RewardConfig, CurriculumConfig, GameplayConfig
 
 
 class WartimeEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"]}
+    PHASE_REINFORCE = "reinforce"
+    PHASE_ATTACK = "attack"
+    HUD_W = 340
 
-    def __init__(self, render_mode=None, reward_cfg: RewardConfig=None, curriculum_cfg:CurriculumConfig=None, curriculum_level:int=0):
+    def __init__(
+        self,
+        render_mode=None,
+        reward_cfg: RewardConfig=None,
+        curriculum_cfg: CurriculumConfig=None,
+        gameplay_cfg: GameplayConfig=None,
+        curriculum_level: int=0,
+    ):
         super().__init__()
         self.render_mode = render_mode
         self.attack_bonus = False
         self.cfg = reward_cfg or RewardConfig()
         self.curriculum = curriculum_cfg or CurriculumConfig()
+        self.gameplay = gameplay_cfg or GameplayConfig()
 
-        self.curriculum_level=max(0,min(curriculum_level, len(self.curriculum.phase)-1))
+        self.curriculum_level = max(
+            0,
+            min(curriculum_level, len(self.curriculum.phase) - 1),
+        )
 
-        # Observation: for each territory [owner (0-2), armies (normalized)]
+        self.deploy_action_count = len(TERRITORIES)
+        self.attack_action_offset = self.deploy_action_count
+        self.pass_action = self.deploy_action_count + len(ATTACK_PAIRS)
+
+        # Observation: for each territory [owner (0-2), armies (normalized)],
+        # followed by current phase and pending reinforcement count.
         self.observation_space = spaces.Box(
             low=0, high=1,
-            shape=(len(TERRITORIES) * 2,),
+            shape=(len(TERRITORIES) * 2 + 2,),
             dtype=np.float32
         )
 
-        # Actions: index into ATTACK_PAIRS
-        self.action_space = spaces.Discrete(len(ATTACK_PAIRS))
+        # Actions: deploy to each territory, attack along each edge, or pass.
+        self.action_space = spaces.Discrete(self.pass_action + 1)
 
         self._screen = None
         self._clock = None
@@ -45,11 +62,11 @@ class WartimeEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        phase=self.curriculum.phase[self.curriculum_level]
+        phase = self.curriculum.phase[self.curriculum_level]
 
-        # Initialize all territories as neutral with 1 army
+        # Initialize all territories using the selected curriculum phase.
         self.state = {
-            name: {"owner": "neutral", "armies": 1}
+            name: {"owner": "neutral", "armies": phase.n_neutral_armies}
             for name in TERRITORIES
         }
 
@@ -61,18 +78,11 @@ class WartimeEnv(gym.Env):
         self.state["Argentina"]["owner"] = "enemy"
         self.state["Argentina"]["armies"] = phase.enemy_start_armies
 
-        neutral_names=[
-            name for name in TERRITORIES
-            if self.state[name]["owner"]=="neutral"
-        ]
-        boosted=self.np_random.choice(neutral_names, size=min(phase.n_neutral_armies, len(neutral_names)), replace=False)
-        for name in boosted:
-            self.state[name]["armies"]=2
-
         self.steps = 0
         self.max_steps = phase.max_steps
         self.attack_bonus = False
-        self._continents_awarded:set=set()
+        self.turn_phase = self.PHASE_REINFORCE
+        self.pending_reinforcements = self._reinforcement_count("agent")
 
         return self._get_obs(), {}
 
@@ -84,81 +94,63 @@ class WartimeEnv(gym.Env):
         reward = 0.0
         terminated = False
         truncated = self.steps >= self.max_steps
-
-        # Decode action into attack pair
-        src, tgt = ATTACK_PAIRS[action]
-
-        # Validate action - agent must own src and have 2+ armies
-        if self.state[src]["owner"] != "agent" or self.state[src]["armies"] < 2:
-            reward += self.cfg.invalid_action  # invalid action penalty
-        else:
-            tgt_owner = self.state[tgt]["owner"]
-
-            if tgt_owner == "agent":
-                reward += self.cfg.friendly_fire  # attacking own territory
-
-            elif tgt_owner == "neutral":
-                # Capture neutral territory
-                self.state[tgt]["owner"] = "agent"
-                self.state[tgt]["armies"] = 1
-                self.state[src]["armies"] -= 1
-                reward += self.cfg.capture_neutral
-
-            elif tgt_owner == "enemy":
-                # Combat via dice roll
-                attacker_dice = 2 + (1 if self.attack_bonus else 0)
-                if self._resolve_combat(attacker_dice=attacker_dice, defender_dice=1):
-                    # Agent wins
-                    self.state[tgt]["owner"] = "agent"
-                    self.state[tgt]["armies"] = 1
-                    self.state[src]["armies"] -= 1
-                    reward += self.cfg.win_combat
-                else:
-                    # Agent loses
-                    self.state[src]["armies"] -= 1
-                    if self.state[src]["armies"] < 1:
-                        self.state[src]["armies"] = 1
-                    reward += self.cfg.lose_combat
-
-            self.attack_bonus = False
-
-        # Continent bonus armies
-        reward += self._apply_continent_bonus()
-
-        # Survival bonus
-        reward += self.cfg.survival
-
-        # Check win condition - enemy has no territories left
-        enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
-        if len(enemy_territories) == 0:
-            reward += self.cfg.win_game
-            terminated = True
-
-        # Enemy takes its turn
-        if not terminated: 
-            enemy_reward = self._enemy_turn()
-            reward += enemy_reward
-
-        # Check lose condition - agent has no territories left
-        agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
-        if len(agent_territories) == 0:
-            reward += self.cfg.lose_game
-            terminated = True
-
-        agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
-        enemy_territories  = [n for n, d in self.state.items() if d["owner"] == "enemy"]
- 
         phase = self.curriculum.phase[self.curriculum_level]
 
-        # Random event
-        event_reward, event = self._random_event()
-        reward += event_reward
+        event = "No event"
+        action_type = "invalid"
+        agent_reinforcements = 0
+        enemy_reinforcements = 0
 
-        info={
+        if self.turn_phase == self.PHASE_REINFORCE:
+            agent_reinforcements = self._handle_deploy_action(action)
+            if agent_reinforcements:
+                action_type = "deploy"
+            else:
+                reward += self.cfg.invalid_action
+        else:
+            action_type, action_reward, turn_ended = (
+                self._handle_attack_action(action)
+            )
+            reward += action_reward
+
+            if turn_ended:
+                self.attack_bonus = False
+
+                enemy_territories = self._owned_territories("enemy")
+                if len(enemy_territories) == 0:
+                    reward += self.cfg.win_game
+                    terminated = True
+
+                if not terminated:
+                    enemy_reinforcements = self._assign_enemy_reinforcements()
+                    enemy_reward = self._enemy_turn()
+                    reward += enemy_reward
+
+                agent_territories = self._owned_territories("agent")
+                if len(agent_territories) == 0:
+                    reward += self.cfg.lose_game
+                    terminated = True
+
+                if not terminated:
+                    event_reward, event = self._random_event()
+                    reward += event_reward
+                    self._start_agent_turn()
+
+        reward += self.cfg.survival
+
+        agent_territories = self._owned_territories("agent")
+        enemy_territories = self._owned_territories("enemy")
+
+        info = {
             "step": self.steps,
             "event": event,
+            "action_type": action_type,
+            "turn_phase": self.turn_phase,
+            "pending_reinforcements": self.pending_reinforcements,
             "agent_territories": len(agent_territories),
             "enemy_territories": len(enemy_territories),
+            "agent_reinforcements": agent_reinforcements,
+            "enemy_reinforcements": enemy_reinforcements,
             "attack_bonus_active": self.attack_bonus,
             "curriculum_level": self.curriculum_level,
             "curriculum_phase": phase.name,
@@ -175,24 +167,218 @@ class WartimeEnv(gym.Env):
         for name in TERRITORIES:
             d = self.state[name]
             obs.append(owner_map[d["owner"]])
-            obs.append(min(d["armies"] / 10.0, 1.0))
+            obs.append(min(d["armies"] / self.gameplay.max_armies_per_territory, 1.0))
+        obs.append(0.0 if self.turn_phase == self.PHASE_REINFORCE else 1.0)
+        obs.append(min(
+            self.pending_reinforcements / self.gameplay.max_pending_reinforcements,
+            1.0,
+        ))
         return np.array(obs, dtype=np.float32)
 
     # -------------------------------------------------------------------------
-    # CONTINENT BONUS
+    # ACTION HELPERS
     # -------------------------------------------------------------------------
-    def _apply_continent_bonus(self):
-        bonus = 0.0
-        for cont, data in CONTINENTS.items():
-            if cont in self._continents_awarded:
-                continue
-            owners=[self.state[t]["owner"] for t in data["territories"]]
-            if all(o=="agent" for o in owners):
-                self._continents_awarded.add(cont)
-                for t in data["territories"]:
-                    self.state[t]["armies"]+=1
-                bonus+=data["bonus_armies"]*self.cfg.continent_scale
+    def valid_action_mask(self):
+        mask = np.zeros(self.action_space.n, dtype=bool)
+
+        if self.turn_phase == self.PHASE_REINFORCE:
+            for idx, name in enumerate(TERRITORIES):
+                if self._can_deploy_to(name):
+                    mask[idx] = True
+        else:
+            for idx, (src, tgt) in enumerate(ATTACK_PAIRS):
+                action = self.attack_action_offset + idx
+                if self._can_attack(src, tgt):
+                    mask[action] = True
+            mask[self.pass_action] = True
+
+        return mask
+
+    def sample_valid_action(self):
+        valid_actions = np.flatnonzero(self.valid_action_mask())
+        if len(valid_actions) == 0:
+            return self.pass_action
+        idx = self.np_random.integers(0, len(valid_actions))
+        return int(valid_actions[idx])
+
+    def describe_action(self, action):
+        if 0 <= action < self.deploy_action_count:
+            territory = list(TERRITORIES)[action]
+            return f"deploy:{territory}"
+        if self.attack_action_offset <= action < self.pass_action:
+            src, tgt = ATTACK_PAIRS[action - self.attack_action_offset]
+            return f"attack:{src}->{tgt}"
+        if action == self.pass_action:
+            return "pass"
+        return "invalid"
+
+    # -------------------------------------------------------------------------
+    # REINFORCEMENTS
+    # -------------------------------------------------------------------------
+    def _assign_enemy_reinforcements(self):
+        owned = self._owned_territories("enemy")
+        if not owned:
+            return 0
+
+        reinforcements = self._reinforcement_count("enemy")
+        placed = 0
+        for _ in range(reinforcements):
+            target = self._choose_enemy_reinforcement_target()
+            if target is None:
+                break
+            self.state[target]["armies"] = min(
+                self.state[target]["armies"] + 1,
+                self.gameplay.max_armies_per_territory,
+            )
+            placed += 1
+        return placed
+
+    def _handle_deploy_action(self, action):
+        if action < 0 or action >= self.deploy_action_count:
+            return 0
+
+        territory = list(TERRITORIES)[action]
+        if self.pending_reinforcements <= 0:
+            self.turn_phase = self.PHASE_ATTACK
+            return 0
+        if not self._can_deploy_to(territory):
+            return 0
+
+        self.state[territory]["armies"] += 1
+        self.pending_reinforcements -= 1
+        if self.pending_reinforcements == 0 or not self._agent_has_deploy_targets():
+            self.turn_phase = self.PHASE_ATTACK
+            self.pending_reinforcements = 0
+        return 1
+
+    def _handle_attack_action(self, action):
+        if action == self.pass_action:
+            return "pass", 0.0, True
+        if action < self.attack_action_offset or action >= self.pass_action:
+            return "invalid", self.cfg.invalid_action, False
+
+        attack_idx = action - self.attack_action_offset
+        src, tgt = ATTACK_PAIRS[attack_idx]
+        return "attack", self._resolve_agent_attack(src, tgt), True
+
+    def _resolve_agent_attack(self, src, tgt):
+        if self.state[src]["owner"] != "agent" or self.state[src]["armies"] < 2:
+            return self.cfg.invalid_action
+
+        tgt_owner = self.state[tgt]["owner"]
+        if tgt_owner == "agent":
+            return self.cfg.friendly_fire
+
+        if tgt_owner == "neutral":
+            self.state[tgt]["owner"] = "agent"
+            moved = self._move_armies_after_capture(src)
+            self.state[tgt]["armies"] = moved
+            return self.cfg.capture_neutral
+
+        attacker_dice = self.gameplay.attacker_dice
+        if self.attack_bonus:
+            attacker_dice += self.gameplay.attack_bonus_dice
+
+        if self._resolve_combat(
+            attacker_dice=attacker_dice,
+            defender_dice=self.gameplay.defender_dice,
+        ):
+            self.state[tgt]["owner"] = "agent"
+            moved = self._move_armies_after_capture(src)
+            self.state[tgt]["armies"] = moved
+            return self.cfg.win_combat
+
+        self._remove_armies(src, self.gameplay.combat_loss_armies)
+        return self.cfg.lose_combat
+
+    def _start_agent_turn(self):
+        self.turn_phase = self.PHASE_REINFORCE
+        self.pending_reinforcements = self._reinforcement_count("agent")
+        if self.pending_reinforcements == 0 or not self._agent_has_deploy_targets():
+            self.turn_phase = self.PHASE_ATTACK
+            self.pending_reinforcements = 0
+
+    def _can_deploy_to(self, territory):
+        return (
+            self.pending_reinforcements > 0
+            and self.state[territory]["owner"] == "agent"
+            and self.state[territory]["armies"] < self.gameplay.max_armies_per_territory
+        )
+
+    def _agent_has_deploy_targets(self):
+        return any(self._can_deploy_to(name) for name in TERRITORIES)
+
+    def _can_attack(self, src, tgt):
+        return (
+            self.state[src]["owner"] == "agent"
+            and self.state[src]["armies"] >= 2
+            and self.state[tgt]["owner"] != "agent"
+        )
+
+    def _reinforcement_count(self, owner):
+        owned = self._owned_territories(owner)
+        base = max(
+            self.gameplay.min_reinforcements,
+            len(owned) // self.gameplay.territories_per_reinforcement,
+        )
+        return base + self._continent_bonus_armies(owner)
+
+    def _continent_bonus_armies(self, owner):
+        bonus = 0
+        for data in CONTINENTS.values():
+            owners = [self.state[t]["owner"] for t in data["territories"]]
+            if all(o == owner for o in owners):
+                bonus += data["bonus_armies"]
         return bonus
+
+    def _choose_enemy_reinforcement_target(self):
+        targets = self._reinforcement_targets("enemy")
+        if not targets:
+            return None
+
+        scores = [
+            (self._enemy_reinforcement_score(name), name)
+            for name in targets
+        ]
+        best_score = max(score for score, _ in scores)
+        candidates = [name for score, name in scores if score == best_score]
+        idx = self.np_random.integers(0, len(candidates))
+        return candidates[idx]
+
+    def _reinforcement_targets(self, owner):
+        return [
+            name for name in self._owned_territories(owner)
+            if self.state[name]["armies"] < self.gameplay.max_armies_per_territory
+        ]
+
+    def _enemy_reinforcement_score(self, name):
+        enemy_pressure = 0
+        neutral_options = 0
+        for adjacent in TERRITORIES[name]["adjacent"]:
+            if adjacent not in TERRITORIES:
+                continue
+            adjacent_owner = self.state[adjacent]["owner"]
+            if adjacent_owner == "agent":
+                enemy_pressure += self.state[adjacent]["armies"]
+            elif adjacent_owner == "neutral":
+                neutral_options += 1
+
+        return (enemy_pressure * 10) + (neutral_options * 3) - self.state[name]["armies"]
+
+    def _owned_territories(self, owner):
+        return [name for name, data in self.state.items() if data["owner"] == owner]
+
+    def _move_armies_after_capture(self, src):
+        movable = max(1, self.state[src]["armies"] - 1)
+        moved = min(self.gameplay.capture_move_armies, movable)
+        self.state[src]["armies"] -= moved
+        return moved
+
+    def _remove_armies(self, territory, amount):
+        self.state[territory]["armies"] = max(
+            1,
+            self.state[territory]["armies"] - amount,
+        )
 
     # -------------------------------------------------------------------------
     # DICE
@@ -219,7 +405,11 @@ class WartimeEnv(gym.Env):
             # Give enemy a free army if it has none to attack with
             enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
             if enemy_territories:
-                self.state[enemy_territories[0]]["armies"] += 1
+                target = enemy_territories[0]
+                self.state[target]["armies"] = min(
+                    self.state[target]["armies"] + 1,
+                    self.gameplay.max_armies_per_territory,
+                )
             return reward
 
         # Enemy picks the attack that targets an agent territory if possible
@@ -247,15 +437,16 @@ class WartimeEnv(gym.Env):
                     break
 
         if best_src and best_tgt:
-            if self._resolve_combat(attacker_dice=2, defender_dice=1):
+            if self._resolve_combat(
+                attacker_dice=self.gameplay.enemy_attacker_dice,
+                defender_dice=self.gameplay.enemy_defender_dice,
+            ):
                 self.state[best_tgt]["owner"] = "enemy"
-                self.state[best_tgt]["armies"] = 1
-                self.state[best_src]["armies"] -= 1
+                moved = self._move_armies_after_capture(best_src)
+                self.state[best_tgt]["armies"] = moved
                 reward = self.cfg.lose_combat
             else:
-                self.state[best_src]["armies"] -= 1
-                if self.state[best_src]["armies"] < 1:
-                    self.state[best_src]["armies"] = 1
+                self._remove_armies(best_src, self.gameplay.combat_loss_armies)
 
         return reward
 
@@ -263,7 +454,7 @@ class WartimeEnv(gym.Env):
     # RANDOM EVENTS
     # -------------------------------------------------------------------------
     def _random_event(self):
-        phase=self.curriculum.phase[self.curriculum_level]
+        phase = self.curriculum.phase[self.curriculum_level]
         if self.np_random.random() > phase.random_event_prob:
             return 0.0, "No event"
 
@@ -275,15 +466,20 @@ class WartimeEnv(gym.Env):
             agent_territories = [n for n, d in self.state.items() if d["owner"] == "agent"]
             if agent_territories:
                 idx = self.np_random.integers(0, len(agent_territories))
-                self.state[agent_territories[idx]]["armies"] += 2
+                target = agent_territories[idx]
+                self.state[target]["armies"] = min(
+                    self.state[target]["armies"] + self.gameplay.supply_drop_armies,
+                    self.gameplay.max_armies_per_territory,
+                )
                 reward = self.cfg.supply_drop
 
         elif event == "enemy_retreat":
             enemy_territories = [n for n, d in self.state.items() if d["owner"] == "enemy"]
             if enemy_territories:
                 idx = self.np_random.integers(0, len(enemy_territories))
-                self.state[enemy_territories[idx]]["armies"] = max(
-                    1, self.state[enemy_territories[idx]]["armies"] - 1
+                self._remove_armies(
+                    enemy_territories[idx],
+                    self.gameplay.retreat_penalty_armies,
                 )
 
         elif event == "ambush":
@@ -298,22 +494,25 @@ class WartimeEnv(gym.Env):
     # -------------------------------------------------------------------------
     # RENDER
     # -------------------------------------------------------------------------
-    def render(self):
+    def render(self, hud=None):
         if self.render_mode != "human":
             return
 
         if self._screen is None:
             pygame.init()
-            self._screen = pygame.display.set_mode((WIN_W, WIN_H))
+            self._screen = pygame.display.set_mode((WIN_W + self.HUD_W, WIN_H))
             pygame.display.set_caption("Wartime-RL")
             self._clock = pygame.time.Clock()
             self._font = pygame.font.SysFont("Arial", 12, bold=True)
+            self._hud_font = pygame.font.SysFont("Arial", 14)
+            self._hud_font_bold = pygame.font.SysFont("Arial", 15, bold=True)
             self._load_sprites()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
-                sys.exit()
+                self._screen = None
+                return
 
         self._screen.fill((180, 210, 230))
 
@@ -341,20 +540,277 @@ class WartimeEnv(gym.Env):
                 pygame.draw.polygon(overlay, color, scaled_poly)
 
         self._screen.blit(overlay, (0, 0))
+        self._draw_action_highlights(hud or {}, sp)
 
         # Draw labels and army counts
         for name, data in self.state.items():
             cx, cy = sp(TERRITORIES[name]["center"])
             label = self._font.render(name, True, (20, 20, 20))
             armies = self._font.render(f"[{data['armies']}]", True, (20, 20, 20))
-            self._screen.blit(label, (cx - label.get_width()//2, cy - 10))
-            self._screen.blit(armies, (cx - armies.get_width()//2, cy + 5))
+            rect_w = max(label.get_width(), armies.get_width()) + 8
+            rect_h = label.get_height() + armies.get_height() + 8
+            rect = pygame.Rect(cx - rect_w // 2, cy - 14, rect_w, rect_h)
+            label_bg = pygame.Surface((rect_w, rect_h), pygame.SRCALPHA)
+            label_bg.fill((245, 248, 242, 190))
+            self._screen.blit(label_bg, rect)
+            pygame.draw.rect(self._screen, (65, 75, 65), rect, 1, border_radius=3)
+            self._screen.blit(label, (cx - label.get_width() // 2, cy - 10))
+            self._screen.blit(armies, (cx - armies.get_width() // 2, cy + 5))
 
-        step_text = self._font.render(f"Step: {self.steps}", True, (0, 0, 0))
-        self._screen.blit(step_text, (10, 10))
+        self._draw_hud(hud or {})
+        if hud and hud.get("episode_overlay"):
+            self._draw_episode_overlay(hud["episode_overlay"])
 
         pygame.display.flip()
         self._clock.tick(10)
+
+    def _draw_action_highlights(self, hud, sp):
+        active_deploy = hud.get("active_deploy")
+        active_source = hud.get("active_source")
+        active_target = hud.get("active_target")
+
+        def draw_poly(name, color, width):
+            if name not in TERRITORIES:
+                return
+            points = [sp(p) for p in TERRITORIES[name]["polygon"]]
+            pygame.draw.polygon(self._screen, color, points, width)
+
+        if active_deploy:
+            draw_poly(active_deploy, (80, 230, 170), 5)
+        if active_source:
+            draw_poly(active_source, (255, 210, 90), 5)
+        if active_target:
+            draw_poly(active_target, (255, 95, 95), 5)
+
+        if active_source in TERRITORIES and active_target in TERRITORIES:
+            source_center = sp(TERRITORIES[active_source]["center"])
+            target_center = sp(TERRITORIES[active_target]["center"])
+            pygame.draw.line(
+                self._screen,
+                (255, 235, 125),
+                source_center,
+                target_center,
+                4,
+            )
+            pygame.draw.circle(self._screen, (255, 235, 125), source_center, 7)
+            pygame.draw.circle(self._screen, (255, 95, 95), target_center, 7)
+
+    def _draw_hud(self, hud):
+        panel_x = WIN_W
+        padding = 14
+        content_w = self.HUD_W - (padding * 2)
+        y = padding
+        pygame.draw.rect(self._screen, (26, 31, 38), (panel_x, 0, self.HUD_W, WIN_H))
+        pygame.draw.line(self._screen, (85, 96, 108), (panel_x, 0), (panel_x, WIN_H), 2)
+
+        def fit_text(text, font, max_width):
+            text = str(text)
+            if font.size(text)[0] <= max_width:
+                return text
+            ellipsis = "..."
+            while text and font.size(text + ellipsis)[0] > max_width:
+                text = text[:-1]
+            return text + ellipsis if text else ellipsis
+
+        def draw_text(text, x, y_pos, color=(232, 236, 240), font=None, max_width=None):
+            font = font or self._hud_font
+            if max_width is not None:
+                text = fit_text(text, font, max_width)
+            rendered = font.render(str(text), True, color)
+            self._screen.blit(rendered, (x, y_pos))
+            return y_pos + rendered.get_height() + 3
+
+        def draw_section(title, y_pos):
+            y_pos += 5
+            y_pos = draw_text(title.upper(), panel_x + padding, y_pos, (158, 176, 196), self._hud_font_bold)
+            pygame.draw.line(
+                self._screen,
+                (65, 75, 86),
+                (panel_x + padding, y_pos),
+                (panel_x + self.HUD_W - padding, y_pos),
+                1,
+            )
+            return y_pos + 6
+
+        def metric(label, value, y_pos, color=(232, 236, 240), bg=None):
+            if bg is not None:
+                pygame.draw.rect(
+                    self._screen,
+                    bg,
+                    (panel_x + padding - 4, y_pos - 2, content_w + 8, 20),
+                    border_radius=4,
+                )
+            return draw_text(
+                f"{label}: {value}",
+                panel_x + padding,
+                y_pos,
+                color,
+                max_width=content_w,
+            )
+
+        def draw_badge(text, x, y_pos, active, color):
+            bg = color if active else (54, 62, 72)
+            fg = (20, 24, 28) if active else (190, 200, 210)
+            rect = pygame.Rect(x, y_pos, 112, 24)
+            pygame.draw.rect(self._screen, bg, rect, border_radius=4)
+            pygame.draw.rect(self._screen, (90, 100, 112), rect, 1, border_radius=4)
+            rendered = self._hud_font_bold.render(text, True, fg)
+            self._screen.blit(
+                rendered,
+                (x + (rect.width - rendered.get_width()) // 2, y_pos + 4),
+            )
+
+        info = hud.get("info") or {}
+        phase = info.get("turn_phase", self.turn_phase)
+        phase_color = (
+            (93, 195, 151)
+            if phase == self.PHASE_REINFORCE
+            else (237, 151, 91)
+        )
+
+        y = draw_text(
+            "WarTime-RL",
+            panel_x + padding,
+            y,
+            (255, 255, 255),
+            self._hud_font_bold,
+        )
+        y = draw_text("Mechanics HUD", panel_x + padding, y, (184, 194, 204))
+
+        y = draw_section("Turn", y)
+        draw_badge(
+            "REINFORCE",
+            panel_x + padding,
+            y,
+            phase == self.PHASE_REINFORCE,
+            (93, 195, 151),
+        )
+        arrow = self._hud_font_bold.render("->", True, (158, 176, 196))
+        self._screen.blit(arrow, (panel_x + padding + 123, y + 4))
+        draw_badge(
+            "ATTACK",
+            panel_x + padding + 150,
+            y,
+            phase == self.PHASE_ATTACK,
+            (237, 151, 91),
+        )
+        y += 30
+        y = metric("Phase", phase, y, phase_color)
+        y = metric("Pending", info.get("pending_reinforcements", self.pending_reinforcements), y)
+        y = metric("Step", info.get("step", self.steps), y)
+        y = metric(
+            "Agent terr",
+            info.get("agent_territories", len(self._owned_territories("agent"))),
+            y,
+        )
+        y = metric(
+            "Enemy terr",
+            info.get("enemy_territories", len(self._owned_territories("enemy"))),
+            y,
+        )
+
+        y = draw_section("Action", y)
+        y = metric("Last", hud.get("action_label", "none"), y)
+        y = metric("Type", info.get("action_type", "none"), y)
+        for entry in hud.get("action_log", [])[-4:]:
+            y = draw_text(
+                entry,
+                panel_x + padding,
+                y,
+                (205, 214, 224),
+                max_width=content_w,
+            )
+
+        y = draw_section("Reward", y)
+        y = metric("Step reward", f"{hud.get('step_reward', 0.0):+.2f}", y)
+        y = metric("Episode total", f"{hud.get('episode_reward', 0.0):+.2f}", y)
+
+        y = draw_section("Events", y)
+        event_name = info.get("event", "No event")
+        event_bg = (92, 72, 34) if event_name != "No event" else None
+        event_color = (
+            (255, 230, 160)
+            if event_name != "No event"
+            else (232, 236, 240)
+        )
+        y = metric("Event", event_name, y, event_color, event_bg)
+        y = metric("Agent reinf", info.get("agent_reinforcements", 0), y)
+        y = metric("Enemy reinf", info.get("enemy_reinforcements", 0), y)
+        y = metric("Attack bonus", info.get("attack_bonus_active", self.attack_bonus), y)
+        y = metric(
+            "Speed",
+            f"{hud.get('speed_label', 'Medium')} ({hud.get('render_fps', 10)} fps)",
+            y,
+        )
+
+        y = draw_section("Episodes", y)
+        completed = hud.get("completed_episodes", 0)
+        wins = hud.get("wins", 0)
+        losses = hud.get("losses", 0)
+        timeouts = hud.get("timeouts", 0)
+        avg_reward = hud.get("avg_reward", 0.0)
+        win_rate = wins / completed if completed else 0.0
+        y = metric("Current", hud.get("episode", 1), y)
+        y = metric("Completed", completed, y)
+        y = metric("W/L/T", f"{wins}/{losses}/{timeouts}", y)
+        y = metric("Win rate", f"{win_rate:.1%}", y)
+        y = metric("Avg reward", f"{avg_reward:+.2f}", y)
+
+        y = max(y + 10, WIN_H - 48)
+        draw_text(
+            "1 Slow | 2 Med | 3 Fast",
+            panel_x + padding,
+            y,
+            (158, 176, 196),
+            max_width=content_w,
+        )
+        draw_text(
+            "Space pause | Q/Esc quit",
+            panel_x + padding,
+            y + 18,
+            (158, 176, 196),
+            max_width=content_w,
+        )
+
+    def _draw_episode_overlay(self, overlay):
+        surface = pygame.Surface((WIN_W + self.HUD_W, WIN_H), pygame.SRCALPHA)
+        surface.fill((8, 12, 18, 170))
+        self._screen.blit(surface, (0, 0))
+
+        card_w, card_h = 440, 220
+        card = pygame.Rect(
+            ((WIN_W + self.HUD_W) - card_w) // 2,
+            (WIN_H - card_h) // 2,
+            card_w,
+            card_h,
+        )
+        pygame.draw.rect(self._screen, (245, 248, 250), card, border_radius=8)
+        pygame.draw.rect(self._screen, (45, 55, 66), card, 2, border_radius=8)
+
+        outcome = overlay.get("outcome", "EPISODE END")
+        outcome_color = {
+            "WIN": (52, 145, 95),
+            "LOSS": (190, 70, 70),
+            "TIMEOUT": (194, 135, 45),
+        }.get(outcome, (40, 48, 56))
+        title = pygame.font.SysFont("Arial", 28, bold=True).render(
+            outcome,
+            True,
+            outcome_color,
+        )
+        self._screen.blit(title, (card.centerx - title.get_width() // 2, card.y + 24))
+
+        lines = [
+            f"Steps: {overlay.get('steps', 0)}",
+            f"Episode reward: {overlay.get('reward', 0.0):+.2f}",
+            f"Agent territories: {overlay.get('agent_territories', 0)}",
+            f"Enemy territories: {overlay.get('enemy_territories', 0)}",
+        ]
+        y = card.y + 76
+        for line in lines:
+            rendered = self._hud_font.render(line, True, (30, 36, 42))
+            self._screen.blit(rendered, (card.x + 54, y))
+            y += 28
 
     def _load_sprites(self):
         """Load sprites as neutral only, ownership shown via polygon overlay."""
@@ -370,4 +826,3 @@ class WartimeEnv(gym.Env):
         if self._screen is not None:
             pygame.quit()
             self._screen = None
-
