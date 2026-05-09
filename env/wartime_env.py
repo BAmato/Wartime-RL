@@ -77,8 +77,9 @@ class WartimeEnv(gym.Env):
         self.state["Argentina"]["armies"] = phase.enemy_start_armies
 
         self.steps = 0
-        self.max_steps = phase.max_steps
+        self.max_steps = phase.max_turns
         self.attack_bonus = False
+        self.attacked_this_turn = False
         self.turn_phase = self.PHASE_REINFORCE
         self.pending_reinforcements = self._reinforcement_count("agent")
 
@@ -95,6 +96,8 @@ class WartimeEnv(gym.Env):
 
         event = "No event"
         action_type = "none"
+        combat_result = "none"
+        border_pressure_val = 0.0
         agent_reinforcements = 0
         enemy_reinforcements = 0
         fortify_source = None
@@ -106,7 +109,7 @@ class WartimeEnv(gym.Env):
                 action_type = "deploy"
 
         elif self.turn_phase == self.PHASE_ATTACK:
-            action_type, action_reward, turn_ended = self._handle_attack_action(action)
+            action_type, action_reward, combat_result, turn_ended = self._handle_attack_action(action)
             reward += action_reward
 
             if turn_ended:
@@ -120,7 +123,7 @@ class WartimeEnv(gym.Env):
                     if self._agent_has_fortify_targets():
                         self.turn_phase = self.PHASE_FORTIFY
                     else:
-                        end_r, terminated, event, enemy_reinforcements = (
+                        end_r, terminated, event, enemy_reinforcements, border_pressure_val = (
                             self._end_player_turn()
                         )
                         reward += end_r
@@ -132,7 +135,7 @@ class WartimeEnv(gym.Env):
             reward += action_reward
 
             if turn_ended:
-                end_r, terminated, event, enemy_reinforcements = (
+                end_r, terminated, event, enemy_reinforcements, border_pressure_val = (
                     self._end_player_turn()
                 )
                 reward += end_r
@@ -148,6 +151,8 @@ class WartimeEnv(gym.Env):
             "event": event,
             "action_type": action_type,
             "turn_phase": self.turn_phase,
+            "combat_result": combat_result,
+            "border_pressure": border_pressure_val,
             "pending_reinforcements": self.pending_reinforcements,
             "agent_territories": len(agent_territories),
             "enemy_territories": len(enemy_territories),
@@ -236,7 +241,7 @@ class WartimeEnv(gym.Env):
     # -------------------------------------------------------------------------
     def _end_player_turn(self):
         """Run enemy turn, random events, and start new agent turn.
-        Returns (reward, terminated, event, enemy_reinforcements_placed)."""
+        Returns (reward, terminated, event, enemy_reinforcements, border_pressure_penalty)."""
         reward = 0.0
         terminated = False
         event = "No event"
@@ -254,8 +259,11 @@ class WartimeEnv(gym.Env):
             reward += event_reward
             self._start_agent_turn()
 
-        return reward, terminated, event, enemy_reinforcements
+        border_pressure_penalty = self._border_pressure_penalty()
+        reward += border_pressure_penalty
 
+        return reward, terminated, event, enemy_reinforcements, border_pressure_penalty
+    
     # -------------------------------------------------------------------------
     # REINFORCEMENTS
     # -------------------------------------------------------------------------
@@ -297,11 +305,14 @@ class WartimeEnv(gym.Env):
 
     def _handle_attack_action(self, action):
         if action == self.pass_action:
-            return "pass", 0.0, True
+            penalty = 0.0 if self.attacked_this_turn else self.cfg.pass_attack
+            return "pass", penalty, "none", True
 
         attack_idx = action - self.attack_action_offset
         src, tgt = ATTACK_PAIRS[attack_idx]
-        return "attack", self._resolve_agent_attack(src, tgt), True
+        reward, combat_result = self._resolve_agent_attack(src, tgt)
+        self.attacked_this_turn = True
+        return "attack", reward, combat_result, True
 
     def _handle_fortify_action(self, action):
         """Returns (action_type, reward, turn_ended, src, tgt)."""
@@ -351,14 +362,40 @@ class WartimeEnv(gym.Env):
         moved = max(0, min(available, cap))
         self.state[src]["armies"] -= moved
         self.state[tgt]["armies"] += moved
-        return 0.0
+        tgt_borders_enemy = any(
+            self.state.get(adj, {}).get("owner") == "enemy"
+            for adj in TERRITORIES[tgt]["adjacent"]
+            if adj in TERRITORIES
+        )
+        return self.cfg.defensive_fortify if tgt_borders_enemy else 0.0
+
+    def _border_pressure_penalty(self):
+        """Penalty for agent border territories where enemy armies outnumber by >1.5x."""
+        total_penalty = 0.0
+        for name, data in self.state.items():
+            if data["owner"] != "agent":
+                continue
+            enemy_adjacent = sum(
+                self.state[adj]["armies"]
+                for adj in TERRITORIES[name]["adjacent"]
+                if adj in TERRITORIES and self.state[adj]["owner"] == "enemy"
+            )
+            if enemy_adjacent == 0:
+                continue
+            agent_armies = max(data["armies"], 1)  # floor at 1 to avoid division by zero
+            ratio = enemy_adjacent / agent_armies
+            if ratio > 1.5:
+                total_penalty += self.cfg.border_pressure * ratio
+        return total_penalty
 
     def _start_agent_turn(self):
         self.turn_phase = self.PHASE_REINFORCE
         self.pending_reinforcements = self._reinforcement_count("agent")
+        self.attacked_this_turn = False
         if self.pending_reinforcements == 0 or not self._agent_has_deploy_targets():
             self.turn_phase = self.PHASE_ATTACK
             self.pending_reinforcements = 0
+
 
     def _can_deploy_to(self, territory):
         return (

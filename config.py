@@ -20,6 +20,9 @@ class RewardConfig:
     win_combat: float = +2.0
     lose_combat: float = -1.0      # was -3.0 — too punishing
 
+    border_pressure: float = -0.1   # penalty per turn based on enemy army ratio at borders
+    defensive_fortify: float = +0.3  # reward for fortifying a territory adjacent to an enemy
+
     survival: float = +0.01
     continent_scale: float = +0.5
 
