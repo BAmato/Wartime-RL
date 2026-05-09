@@ -23,7 +23,9 @@ OVERLAY_MS = 1500
 
 # SETUP
 
-env = WartimeEnv(render_mode="human")
+env = WartimeEnv(render_mode="human", curriculum_level=0) #Beginner
+# env = WartimeEnv(render_mode="human", curriculum_level=1) #Intermediate
+# env = WartimeEnv(render_mode="human", curriculum_level=2) #Hard
 obs, _ = env.reset()
 episode = 1
 episode_reward = 0.0
@@ -147,6 +149,7 @@ print(f"\n{'='*55}")
 print("    WarTime-RL -- Agent Check")
 print(f"     Action space : {env.action_space}")
 print(f"    OBS shape : {env.observation_space.shape}")
+print(f"    Curriculum Level: {env.curriculum_level}")
 print(f"\n{'='*55}")
 
 # MAIN LOOP

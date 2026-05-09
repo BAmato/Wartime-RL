@@ -522,9 +522,9 @@ class WartimeEnv(gym.Env):
 
         # Draw ownership color overlay using scaled polygons
         owner_colors = {
-            "agent":   (100, 200, 100, 140),
-            "enemy":   (220, 80,  80,  140),
-            "neutral": None
+            "agent":   OWNER_TINT["agent"],
+            "enemy":   OWNER_TINT["enemy"],
+            "neutral": OWNER_TINT["neutral"]
         }
 
         overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)

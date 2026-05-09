@@ -112,8 +112,8 @@ TERRITORY_COLORS = {
 }
 
 OWNER_TINT = {
-    "agent":   (100, 180, 100),  # green
-    "enemy":   (200, 80,  80),   # red
+    "agent":   (16, 165, 16),  # green
+    "enemy":   (183, 13,  64),   # red
     "neutral": None              # use default territory color
 }
 

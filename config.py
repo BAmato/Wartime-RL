@@ -88,7 +88,7 @@ class CurriculumPhase:
 class CurriculumConfig:
     """Ordered list of curriculum phases
         Pass Curriculum_leve=0/1/2 into wartime_env to select phase
-        Advance phases based on win rate over a rolloing window of episodes
+        Advance phases based on win rate over a rolling window of episodes
     """
 
     phase: list = field(default_factory=lambda: [
