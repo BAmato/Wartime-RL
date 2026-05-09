@@ -32,16 +32,11 @@ class RewardConfig:
 @dataclass
 class GameplayConfig:
     """Core non-learning game mechanics."""
-    min_reinforcements: int = 1
+    min_reinforcements: int = 3
     territories_per_reinforcement: int = 3
-    capture_move_armies: int = 1
     max_armies_per_territory: int = 20
     max_pending_reinforcements: int = 20
-    attacker_dice: int = 2
-    defender_dice: int = 1
-    attack_bonus_dice: int = 1
-    enemy_attacker_dice: int = 1
-    enemy_defender_dice: int = 1
+    attack_bonus_dice: int = 1   # extra die granted by reinforcements event
     supply_drop_armies: int = 2
     retreat_penalty_armies: int = 1
     combat_loss_armies: int = 1

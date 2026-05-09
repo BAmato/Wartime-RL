@@ -59,6 +59,10 @@ def parse_highlights(action_label):
         route = action_label.split(":", 1)[1]
         source, target = route.split("->", 1)
         return {"active_source": source, "active_target": target}
+    if action_label.startswith("fortify:") and "->" in action_label:
+        route = action_label.split(":", 1)[1]
+        source, target = route.split("->", 1)
+        return {"active_fortify_src": source, "active_fortify_tgt": target}
     return {}
 
 
@@ -68,6 +72,8 @@ def append_action_log(action_label, info, reward):
         entry = entry.replace("deploy:", "Deploy ")
     elif entry.startswith("attack:"):
         entry = entry.replace("attack:", "")
+    elif entry.startswith("fortify:"):
+        entry = entry.replace("fortify:", "Fortify ")
     entry = f"{entry}: {info.get('action_type', 'none')} {reward:+.2f}"
     action_log.append(entry)
     del action_log[:-4]
@@ -174,10 +180,10 @@ while True:
         clock.tick(10)
         continue
 
-    # STEP
+    # STEP — describe_action must be called BEFORE step while phase is current
     action = env.sample_valid_action()
-    obs, reward, terminated, truncated, info = env.step(action)
     action_label = env.describe_action(action)
+    obs, reward, terminated, truncated, info = env.step(action)
 
     episode_reward += reward
     episode_steps += 1
