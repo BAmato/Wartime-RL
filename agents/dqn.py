@@ -59,7 +59,11 @@ class DQNAgent:
                 return env.sample_valid_action()
             return int(np.random.randint(self.n_actions))
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
-        return int(self.online(obs_t).argmax(dim=1).item())
+        q_values = self.online(obs_t).squeeze(0)
+        if env is not None:
+            mask = torch.BoolTensor(env.valid_action_mask())
+            q_values[~mask] = -float("inf")  # mask out illegal actions
+        return int(q_values.argmax().item())
 
     # ------------------------------------------------------------------
     def push(self, obs: np.ndarray, action: int, reward: float,

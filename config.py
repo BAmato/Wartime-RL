@@ -1,7 +1,7 @@
 """
 config.py
 All reward weights, training hyperparameters, and 
-curriculum settings live here. They can be changed here in on place instead of hardcoding 
+curriculum settings live here. They can be changed here in one place instead of hardcoding 
 agent code
 
 Author: Damian Villarreal
@@ -15,33 +15,24 @@ class RewardConfig:
     """All scalar reward components used in wartime_env.step()
     Tweak these instead of inside env
     """
-    # invalid/wasteful actions
-    invalid_action: float = -0.01
-    friendly_fire: float = -0.05
 
-    # territory actions
     capture_neutral: float = +1.0
-    win_combat: float = +3.0
-    lose_combat: float = -3.0
+    win_combat: float = +2.0
+    lose_combat: float = -1.0      # was -3.0 — too punishing
 
-    # per-step signals
     survival: float = +0.01
     continent_scale: float = +0.5
 
-    # terminal outcomes
     win_game: float = +20.0
-    lose_game: float = -40.0
-
-    # random events
+    lose_game: float = -20.0       # was -40.0 — match the win reward
+    
     supply_drop: float = +1.0
     reinforcements: float = +0.5
-
 
 @dataclass
 class GameplayConfig:
     """Core non-learning game mechanics."""
-
-    min_reinforcements: int = 3
+    min_reinforcements: int = 1
     territories_per_reinforcement: int = 3
     capture_move_armies: int = 1
     max_armies_per_territory: int = 20
@@ -50,7 +41,7 @@ class GameplayConfig:
     defender_dice: int = 1
     attack_bonus_dice: int = 1
     enemy_attacker_dice: int = 1
-    enemy_defender_dice: int = 2
+    enemy_defender_dice: int = 1
     supply_drop_armies: int = 2
     retreat_penalty_armies: int = 1
     combat_loss_armies: int = 1
@@ -59,23 +50,22 @@ class GameplayConfig:
 @dataclass
 class TrainingConfig:
     """DQN training hyperparameters"""
-
     total_steps: int = 200_000
     batch_size: int = 64
     replay_capacity: int = 50_000
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-6      # was 1e-5
+    grad_clip: float = 0.5           # was 1.0
     gamma: float = 0.99
     tau: float = 0.005
     eps_start: float = 1.0
     eps_end: float = 0.05
-    eps_decay: int = 50_000
-    grad_clip: float = 10.0
+    eps_decay: int = 80_000
+    grad_clip: float = 1.0
 
 
 @dataclass
 class CurriculumPhase:
     """Defines one difficulty phase of training"""
-
     name: str
     max_steps: int
     agent_start_armies: int
@@ -86,17 +76,16 @@ class CurriculumPhase:
 
 @dataclass
 class CurriculumConfig:
-    """Ordered list of curriculum phases
-        Pass Curriculum_leve=0/1/2 into wartime_env to select phase
-        Advance phases based on win rate over a rolling window of episodes
+    """Ordered list of curriculum phases.
+    Pass curriculum_level=0/1/2 into wartime_env to select phase.
+    Advance phases based on win rate over a rolling window of episodes.
     """
-
     phase: list = field(default_factory=lambda: [
         CurriculumPhase(
             name="Beginner",
-            max_steps=100,
-            agent_start_armies=5,
-            enemy_start_armies=2,
+            max_steps=300,
+            agent_start_armies=8,
+            enemy_start_armies=1,
             n_neutral_armies=1,
             random_event_prob=0.05,
         ),
@@ -124,8 +113,8 @@ class CurriculumConfig:
 
 
 class CurriculumTracker:
-    """Tracks episode outcomes and decides when to advance the curriculum
-    Used in training loop
+    """Tracks episode outcomes and decides when to advance the curriculum.
+    Used in training loop.
     """
 
     def __init__(self, env, cfg: CurriculumConfig = None):

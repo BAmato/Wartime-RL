@@ -18,7 +18,7 @@ import numpy as np
 from agents.ppo import PPOAgent, PPOConfig
 from config import CurriculumConfig, CurriculumTracker
 from env.wartime_env import WartimeEnv
-
+from datetime import datetime
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -44,7 +44,8 @@ def train():
     tracker = CurriculumTracker(env, cur_cfg)
 
     os.makedirs(args.out, exist_ok=True)
-    log_path = os.path.join(args.out, "ppo_training_log.csv")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(args.out, f"ppo_training_log_{timestamp}.csv")
 
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow([
@@ -129,7 +130,7 @@ def train():
         )
 
     env.close()
-    save_path = os.path.join(args.out, "ppo_final.pt")
+    save_path = os.path.join(args.out, f"ppo_final_{timestamp}.pt")
     agent.save(save_path)
     print(f"\nPPO training complete — {episode} episodes, {global_step} steps")
     print(f"Model : {save_path}")

@@ -18,7 +18,7 @@ import numpy as np
 from agents.dqn import DQNAgent
 from config import CurriculumConfig, CurriculumTracker, TrainingConfig
 from env.wartime_env import WartimeEnv
-
+from datetime import datetime
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -44,7 +44,8 @@ def train():
     tracker = CurriculumTracker(env, cur_cfg)
 
     os.makedirs(args.out, exist_ok=True)
-    log_path = os.path.join(args.out, "dqn_training_log.csv")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(args.out, f"dqn_training_log_{timestamp}.csv")
 
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow([
@@ -61,8 +62,9 @@ def train():
     obs, _ = env.reset()
 
     while agent.total_steps < cfg.total_steps:
-        action = agent.select_action(obs)
+        action = agent.select_action(obs, env=env)
         next_obs, reward, terminated, truncated, info = env.step(action)
+        reward = max(-1.0, min(1.0, reward / 20.0))  # normalize to [-1, 1]
         done = terminated or truncated
 
         agent.push(obs, action, reward, next_obs, done)
@@ -106,7 +108,7 @@ def train():
             ep_losses.clear()
 
     env.close()
-    save_path = os.path.join(args.out, "dqn_final.pt")
+    save_path = os.path.join(args.out, f"dqn_final_{timestamp}.pt")
     agent.save(save_path)
     print(f"\nDQN training complete — {episode} episodes, {agent.total_steps} steps")
     print(f"Model : {save_path}")
