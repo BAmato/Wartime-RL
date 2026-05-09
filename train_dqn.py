@@ -51,7 +51,24 @@ def train():
     log_path = os.path.join(args.out, f"dqn_training_log_{timestamp}.csv")
 
     with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow([
+        writer = csv.writer(f)
+        # Metadata header
+        writer.writerow(["# run_timestamp", timestamp])
+        writer.writerow(["# total_steps", cfg.total_steps])
+        writer.writerow(["# learning_rate", cfg.learning_rate])
+        writer.writerow(["# gamma", cfg.gamma])
+        writer.writerow(["# tau", cfg.tau])
+        writer.writerow(["# eps_decay", cfg.eps_decay])
+        writer.writerow(["# grad_clip", cfg.grad_clip])
+        writer.writerow(["# batch_size", cfg.batch_size])
+        writer.writerow(["# replay_capacity", cfg.replay_capacity])
+        writer.writerow(["# beginner_max_steps", cur_cfg.phase[0].max_steps])
+        writer.writerow(["# beginner_agent_armies", cur_cfg.phase[0].agent_start_armies])
+        writer.writerow(["# beginner_enemy_armies", cur_cfg.phase[0].enemy_start_armies])
+        writer.writerow(["# reward_clip", "none"])
+        writer.writerow([])  # blank line separator
+        # Column headers
+        writer.writerow([
             "episode", "global_step", "outcome", "ep_steps", "reward",
             "agent_terr", "enemy_terr", "epsilon", "curriculum_level", "mean_loss",
         ])
@@ -67,7 +84,7 @@ def train():
     while agent.total_steps < cfg.total_steps:
         action = agent.select_action(obs, env=env)
         next_obs, reward, terminated, truncated, info = env.step(action)
-        
+
         done = terminated or truncated
         agent.push(obs, action, reward, next_obs, terminated)
 

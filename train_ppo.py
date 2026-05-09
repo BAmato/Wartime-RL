@@ -37,6 +37,7 @@ def train():
         ppo_cfg.total_steps = args.steps
     cur_cfg = CurriculumConfig()
 
+    env = WartimeEnv(render_mode="rgb_array", curriculum_level=args.level)
     env = RecordVideo(env, video_folder=os.path.join(args.out, "ppo_videos"), episode_trigger=lambda ep: ep % 100 == 0)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
@@ -49,7 +50,21 @@ def train():
     log_path = os.path.join(args.out, f"ppo_training_log_{timestamp}.csv")
 
     with open(log_path, "w", newline="") as f:
-        csv.writer(f).writerow([
+        writer = csv.writer(f)
+        writer.writerow(["# run_timestamp", timestamp])
+        writer.writerow(["# total_steps", ppo_cfg.total_steps])
+        writer.writerow(["# learning_rate", ppo_cfg.lr])
+        writer.writerow(["# gamma", ppo_cfg.gamma])
+        writer.writerow(["# gae_lambda", ppo_cfg.gae_lambda])
+        writer.writerow(["# clip_eps", ppo_cfg.clip_eps])
+        writer.writerow(["# rollout_steps", ppo_cfg.rollout_steps])
+        writer.writerow(["# batch_size", ppo_cfg.batch_size])
+        writer.writerow(["# n_epochs", ppo_cfg.n_epochs])
+        writer.writerow(["# beginner_max_steps", cur_cfg.phase[0].max_steps])
+        writer.writerow(["# beginner_agent_armies", cur_cfg.phase[0].agent_start_armies])
+        writer.writerow(["# beginner_enemy_armies", cur_cfg.phase[0].enemy_start_armies])
+        writer.writerow([])
+        writer.writerow([
             "episode", "global_step", "outcome", "ep_steps", "reward",
             "agent_terr", "enemy_terr", "curriculum_level",
         ])
@@ -85,7 +100,7 @@ def train():
             rew_buf.append(reward)
             val_buf.append(value)
             logp_buf.append(log_prob)
-            done_buf.append(float(terminated))
+            done_buf.append(float(done))
 
             obs = next_obs
             ep_reward += reward
