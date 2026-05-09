@@ -169,6 +169,8 @@ def train():
                     f"{ep_reward:.2f}", info["agent_territories"],
                     info["enemy_territories"], f"{agent.epsilon():.4f}",
                     raw_env.curriculum_level, f"{mean_loss:.6f}",
+                    agent_armies, enemy_armies,
+                    phase_counts["reinforce"], phase_counts["attack"], phase_counts["fortify"],
                     combat_wins, combat_losses, fortify_count,
                     encode_continents(raw_env),
                     encode_final_state(raw_env),
