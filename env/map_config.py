@@ -4,7 +4,7 @@ TERRITORIES = {
         "polygon": [(80,80),(260,70),(300,160),(300,260),(240,230),(90,220)],
         "center": (185,165),
         "continent": "North America",
-        "adjacent": ["Northwest Territory", "Alberta", "Kamchatka"],
+        "adjacent": ["Northwest Territory", "Alberta"],
     },
     "Northwest Territory": {
         "polygon": [(260,70),(520,70),(560,180),(470,260),(300,260),(240,230),(300,160)],
