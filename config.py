@@ -55,7 +55,7 @@ class TrainingConfig:
     total_steps: int = 200_000
     batch_size: int = 64
     replay_capacity: int = 50_000
-    learning_rate: float = 2.5e-4
+    learning_rate: float = 1e-4   # back down from 2.5e-4
     gamma: float = 0.95
     tau: float = 0.01
     eps_start: float = 1.0
