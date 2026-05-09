@@ -21,12 +21,39 @@ from env.wartime_env import WartimeEnv
 from datetime import datetime
 from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--steps", type=int, default=None, help="Override total_steps")
     p.add_argument("--level", type=int, default=0, help="Starting curriculum level (0-2)")
     p.add_argument("--out", type=str, default="results", help="Output directory")
     return p.parse_args()
+
+
+def encode_final_state(raw_env) -> str:
+    """Encode territory state as '0A8|1E3|2N1|...'"""
+    owner_code = {"agent": "A", "enemy": "E", "neutral": "N"}
+    parts = []
+    for idx, (name, data) in enumerate(raw_env.state.items()):
+        parts.append(f"{idx}{owner_code[data['owner']]}{data['armies']}")
+    return "|".join(parts)
+
+
+def encode_continents(raw_env) -> str:
+    """Encode continent control as 'NA:A,SA:N,...'"""
+    from env.map_config import CONTINENTS
+    codes = {"North America": "NA", "South America": "SA"}
+    results = []
+    for cont, data in CONTINENTS.items():
+        owners = [raw_env.state[t]["owner"] for t in data["territories"]]
+        if all(o == "agent" for o in owners):
+            ctrl = "A"
+        elif all(o == "enemy" for o in owners):
+            ctrl = "E"
+        else:
+            ctrl = "N"
+        results.append(f"{codes.get(cont, cont)}:{ctrl}")
+    return ",".join(results)
 
 
 def train():
@@ -45,7 +72,7 @@ def train():
     n_actions = env.action_space.n
 
     agent = DQNAgent(obs_dim, n_actions, cfg)
-    tracker = CurriculumTracker(raw_env, cur_cfg)  # use raw_env
+    tracker = CurriculumTracker(raw_env, cur_cfg)
 
     os.makedirs(args.out, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -72,6 +99,10 @@ def train():
         writer.writerow([
             "episode", "global_step", "outcome", "ep_steps", "reward",
             "agent_terr", "enemy_terr", "epsilon", "curriculum_level", "mean_loss",
+            "agent_armies", "enemy_armies",
+            "phase_reinforce", "phase_attack", "phase_fortify",
+            "combat_wins", "combat_losses", "fortify_count",
+            "continents", "final_state",
         ])
 
     episode = 0
@@ -79,6 +110,12 @@ def train():
     ep_steps = 0
     ep_losses: list[float] = []
     start = time.time()
+
+    # per-episode trackers
+    phase_counts = {"reinforce": 0, "attack": 0, "fortify": 0}
+    combat_wins = 0
+    combat_losses = 0
+    fortify_count = 0
 
     obs, _ = env.reset()
 
@@ -92,6 +129,18 @@ def train():
         loss = agent.train_step()
         if loss is not None:
             ep_losses.append(loss)
+
+        # track per-step info
+        phase_counts[info.get("turn_phase", "attack")] = (
+            phase_counts.get(info.get("turn_phase", "attack"), 0) + 1
+        )
+        if info.get("action_type") == "attack":
+            if info.get("combat_result") == "win":
+                combat_wins += 1
+            elif info.get("combat_result") == "loss":
+                combat_losses += 1
+        if info.get("action_type") == "fortify":
+            fortify_count += 1
 
         obs = next_obs
         ep_reward += reward
@@ -107,12 +156,22 @@ def train():
             tracker.record(outcome)
             mean_loss = float(np.mean(ep_losses)) if ep_losses else 0.0
 
+            agent_armies = sum(
+                d["armies"] for d in raw_env.state.values() if d["owner"] == "agent"
+            )
+            enemy_armies = sum(
+                d["armies"] for d in raw_env.state.values() if d["owner"] == "enemy"
+            )
+
             with open(log_path, "a", newline="") as f:
                 csv.writer(f).writerow([
                     episode, agent.total_steps, outcome, ep_steps,
                     f"{ep_reward:.2f}", info["agent_territories"],
                     info["enemy_territories"], f"{agent.epsilon():.4f}",
                     raw_env.curriculum_level, f"{mean_loss:.6f}",
+                    combat_wins, combat_losses, fortify_count,
+                    encode_continents(raw_env),
+                    encode_final_state(raw_env),
                 ])
 
             if episode % 100 == 0:
@@ -122,11 +181,16 @@ def train():
                     f"WR {tracker.win_rate():.1%} | eps {agent.epsilon():.3f} | "
                     f"loss {mean_loss:.4f} | lvl {raw_env.curriculum_level} | {elapsed:.0f}s"
                 )
-                
+
             obs, _ = env.reset()
             ep_reward = 0.0
             ep_steps = 0
             ep_losses.clear()
+            # reset per-episode trackers
+            phase_counts = {"reinforce": 0, "attack": 0, "fortify": 0}
+            combat_wins = 0
+            combat_losses = 0
+            fortify_count = 0
 
     env.close()
     save_path = os.path.join(args.out, f"dqn_final_{timestamp}.pt")
