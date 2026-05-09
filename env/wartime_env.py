@@ -329,7 +329,7 @@ class WartimeEnv(gym.Env):
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src, attacker_dice)
             self.state[tgt]["armies"] = moved
-            return self.cfg.capture_neutral
+            return self.cfg.capture_neutral, "none"
 
         attacker_losses, defender_losses = self._resolve_combat(attacker_dice, src, tgt)
         self._remove_armies(src, attacker_losses)
@@ -340,10 +340,10 @@ class WartimeEnv(gym.Env):
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src, attacker_dice)
             self.state[tgt]["armies"] = moved
-            return self.cfg.win_combat
+            return self.cfg.win_combat, "win"
 
         self.state[tgt]["armies"] = remaining_defender
-        return self.cfg.lose_combat
+        return self.cfg.lose_combat, "loss"
 
     def _resolve_fortify(self, src, tgt):
         available = self.state[src]["armies"] - 1
