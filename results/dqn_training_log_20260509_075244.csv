@@ -1,0 +1,17 @@
+# run_timestamp,20260509_075244
+# total_steps,200000
+# learning_rate,0.0001
+# gamma,0.95
+# tau,0.01
+# eps_decay,20000
+# grad_clip,10.0
+# batch_size,64
+# replay_capacity,50000
+# beginner_max_turns,60
+# beginner_agent_armies,8
+# beginner_enemy_armies,1
+# reward_clip,none
+
+episode,global_step,outcome,ep_steps,turns,reward,agent_terr,enemy_terr,epsilon,curriculum_level,mean_loss,agent_armies,enemy_armies,phase_reinforce,phase_attack,phase_fortify,combat_wins,combat_losses,territory_losses,fortify_count,continents,final_state
+1,300,timeout,300,60,-94.26,2,10,0.9858,0,0.566267,91,101,180,60,60,3,41,10,48,"NA:N,SA:N",0E1|1E1|2E9|3E9|4E50|5A41|6E7|7A50|8E7|9E3|10E7|11N1|12E7
+2,600,timeout,300,60,-135.22,3,9,0.9715,0,0.333321,96,98,180,60,60,1,38,6,57,"NA:N,SA:N",0E5|1E11|2A50|3E19|4E3|5A43|6E30|7A3|8E19|9E4|10E4|11N1|12E3

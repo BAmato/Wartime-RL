@@ -84,7 +84,7 @@ class CurriculumConfig:
     phase: list = field(default_factory=lambda: [
         CurriculumPhase(
             name="Beginner",
-            max_turns=30,
+            max_turns=60,
             agent_start_armies=8,
             enemy_start_armies=1,
             n_neutral_armies=1,
@@ -92,7 +92,7 @@ class CurriculumConfig:
         ),
         CurriculumPhase(
             name="Intermediate",
-            max_turns=25,
+            max_turns=30,
             agent_start_armies=3,
             enemy_start_armies=3,
             n_neutral_armies=1,

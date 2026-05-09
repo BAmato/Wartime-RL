@@ -4,7 +4,7 @@ TERRITORIES = {
         "polygon": [(80,80),(260,70),(300,160),(300,260),(240,230),(90,220)],
         "center": (185,165),
         "continent": "North America",
-        "adjacent": ["Northwest Territory", "Alberta"],
+        "adjacent": ["Northwest Territory"],
     },
     "Northwest Territory": {
         "polygon": [(260,70),(520,70),(560,180),(470,260),(300,260),(240,230),(300,160)],
@@ -22,7 +22,7 @@ TERRITORIES = {
         "polygon": [(240,230),(300,260),(470,260),(460,390),(270,395)],
         "center": (365,320),
         "continent": "North America",
-        "adjacent": ["Alaska", "Northwest Territory", "Ontario", "Western United States"],
+        "adjacent": ["Northwest Territory", "Ontario", "Western United States"],
     },
     "Ontario": {
         "polygon": [(470,260),(560,180),(650,240),(660,380),(560,450),(460,390)],
