@@ -23,7 +23,7 @@ class RewardConfig:
     deploy: float = +0.05          # per army placed during reinforce phase
     pass_attack: float = -2.0  # was -0.5 — much stronger penalty
 
-    border_pressure: float = -0.1   # penalty per turn based on enemy army ratio at borders
+    border_pressure: float = -0.05   # penalty per turn based on enemy army ratio at borders
     defensive_fortify: float = +0.3  # reward for fortifying a territory adjacent to an enemy
 
     survival: float = +0.01
