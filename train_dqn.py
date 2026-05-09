@@ -66,7 +66,7 @@ def train():
 
     env = WartimeEnv(render_mode="rgb_array", curriculum_level=args.level)
     raw_env = env  # keep unwrapped reference
-    env = RecordVideo(env, video_folder=os.path.join(args.out, "videos"), episode_trigger=lambda ep: ep % 100 == 0)
+    # env = RecordVideo(env, video_folder=os.path.join(args.out, "videos"), episode_trigger=lambda ep: ep % 100 == 0)
     env = RecordEpisodeStatistics(env)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n

@@ -1,4 +1,4 @@
-name: wartime-rl
+name: venv
 channels:
   - conda-forge
   - defaults

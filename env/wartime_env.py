@@ -127,6 +127,7 @@ class WartimeEnv(gym.Env):
             reward += action_reward
 
             if turn_ended:
+                self.turns+=1
                 self.attack_bonus = False
                 enemy_territories = self._owned_territories("enemy")
                 if len(enemy_territories) == 0:
@@ -358,7 +359,7 @@ class WartimeEnv(gym.Env):
         src, tgt = ATTACK_PAIRS[attack_idx]
         reward, combat_result = self._resolve_agent_attack(src, tgt)
         self.attacked_this_turn = True
-        return "attack", reward, combat_result, True
+        return "attack", reward, combat_result, False
 
     def _handle_fortify_action(self, action):
         """Returns (action_type, reward, turn_ended, src, tgt)."""
@@ -381,12 +382,12 @@ class WartimeEnv(gym.Env):
         attacker_dice = self._attacker_dice_count(src_armies)
         if self.attack_bonus:
             attacker_dice = min(attacker_dice + self.gameplay.attack_bonus_dice, 3)
-
+        strength_bonus = 0.1 if attacker_dice==3 else 0.0
         if tgt_owner == "neutral":
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src, attacker_dice)
             self.state[tgt]["armies"] = moved
-            return self.cfg.capture_neutral, "neutral_capture"
+            return self.cfg.capture_neutral+strength_bonus, "neutral_capture"
 
         attacker_losses, defender_losses = self._resolve_combat(attacker_dice, src, tgt)
         self._remove_armies(src, attacker_losses)
@@ -397,10 +398,10 @@ class WartimeEnv(gym.Env):
             self.state[tgt]["owner"] = "agent"
             moved = self._move_armies_after_capture(src, attacker_dice)
             self.state[tgt]["armies"] = moved
-            return self.cfg.win_combat, "win_territory"
+            return self.cfg.win_combat+strength_bonus, "win_territory"
 
         self.state[tgt]["armies"] = remaining_defender
-        return self.cfg.lose_combat, "lose_combat"
+        return self.cfg.lose_combat+strength_bonus, "lose_combat"
 
     def _resolve_fortify(self, src, tgt):
         available = self.state[src]["armies"] - 1
