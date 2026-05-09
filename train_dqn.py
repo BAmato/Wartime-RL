@@ -38,13 +38,14 @@ def train():
     cur_cfg = CurriculumConfig()
 
     env = WartimeEnv(render_mode="rgb_array", curriculum_level=args.level)
+    raw_env = env  # keep reference before wrapping
     env = RecordVideo(env, video_folder=os.path.join(args.out, "videos"), episode_trigger=lambda ep: ep % 100 == 0)
     env = RecordEpisodeStatistics(env)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
 
     agent = DQNAgent(obs_dim, n_actions, cfg)
-    tracker = CurriculumTracker(env, cur_cfg)
+    tracker = CurriculumTracker(raw_env, cur_cfg)  # use raw_env
 
     os.makedirs(args.out, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

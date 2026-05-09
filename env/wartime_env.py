@@ -105,8 +105,7 @@ class WartimeEnv(gym.Env):
             agent_reinforcements = self._handle_deploy_action(action)
             if agent_reinforcements:
                 action_type = "deploy"
-            else:
-                reward += self.cfg.invalid_action
+
         else:
             action_type, action_reward, turn_ended = (
                 self._handle_attack_action(action)
@@ -254,8 +253,6 @@ class WartimeEnv(gym.Env):
     def _handle_attack_action(self, action):
         if action == self.pass_action:
             return "pass", 0.0, True
-        if action < self.attack_action_offset or action >= self.pass_action:
-            return "invalid", self.cfg.invalid_action, False
 
         attack_idx = action - self.attack_action_offset
         src, tgt = ATTACK_PAIRS[attack_idx]
@@ -264,10 +261,6 @@ class WartimeEnv(gym.Env):
     def _resolve_agent_attack(self, src, tgt):
         if self.state[src]["owner"] != "agent" or self.state[src]["armies"] < 2:
             return self.cfg.invalid_action
-
-        tgt_owner = self.state[tgt]["owner"]
-        if tgt_owner == "agent":
-            return self.cfg.friendly_fire
 
         if tgt_owner == "neutral":
             self.state[tgt]["owner"] = "agent"
