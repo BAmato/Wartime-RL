@@ -188,8 +188,9 @@ class WartimeEnv(gym.Env):
                 continue
             owners=[self.state[t]["owner"] for t in data["territories"]]
             if all(o=="agent" for o in owners):
+                self._continents_awarded.add(cont)
                 for t in data["territories"]:
-                    self.state[t]["territories"]+=1
+                    self.state[t]["armies"]+=1
                 bonus+=data["bonus_armies"]*self.cfg.continent_scale
         return bonus
 
