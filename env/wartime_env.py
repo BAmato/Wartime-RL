@@ -534,7 +534,7 @@ class WartimeEnv(gym.Env):
 
     def _remove_armies(self, territory, amount):
         self.state[territory]["armies"] = max(
-            1,
+            0,
             self.state[territory]["armies"] - amount,
         )
 
