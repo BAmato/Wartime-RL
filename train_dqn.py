@@ -19,6 +19,7 @@ from agents.dqn import DQNAgent
 from config import CurriculumConfig, CurriculumTracker, TrainingConfig
 from env.wartime_env import WartimeEnv
 from datetime import datetime
+from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -36,7 +37,9 @@ def train():
         cfg.total_steps = args.steps
     cur_cfg = CurriculumConfig()
 
-    env = WartimeEnv(render_mode=None, curriculum_level=args.level)
+    env = WartimeEnv(render_mode="rgb_array", curriculum_level=args.level)
+    env = RecordVideo(env, video_folder=os.path.join(args.out, "videos"), episode_trigger=lambda ep: ep % 100 == 0)
+    env = RecordEpisodeStatistics(env)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
 
@@ -64,10 +67,10 @@ def train():
     while agent.total_steps < cfg.total_steps:
         action = agent.select_action(obs, env=env)
         next_obs, reward, terminated, truncated, info = env.step(action)
-        reward = max(-1.0, min(1.0, reward / 20.0))  # normalize to [-1, 1]
+        
         done = terminated or truncated
+        agent.push(obs, action, reward, next_obs, terminated)
 
-        agent.push(obs, action, reward, next_obs, done)
         loss = agent.train_step()
         if loss is not None:
             ep_losses.append(loss)

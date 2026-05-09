@@ -53,14 +53,13 @@ class TrainingConfig:
     total_steps: int = 200_000
     batch_size: int = 64
     replay_capacity: int = 50_000
-    learning_rate: float = 1e-6      # was 1e-5
-    grad_clip: float = 0.5           # was 1.0
-    gamma: float = 0.99
-    tau: float = 0.005
+    learning_rate: float = 2.5e-4
+    gamma: float = 0.95
+    tau: float = 0.01
     eps_start: float = 1.0
     eps_end: float = 0.05
-    eps_decay: int = 80_000
-    grad_clip: float = 1.0
+    eps_decay: int = 50_000
+    grad_clip: float = 10.0
 
 
 @dataclass

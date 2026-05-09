@@ -495,7 +495,7 @@ class WartimeEnv(gym.Env):
     # RENDER
     # -------------------------------------------------------------------------
     def render(self, hud=None):
-        if self.render_mode != "human":
+        if self.render_mode not in ("human", "rgb_array"):
             return
 
         if self._screen is None:
@@ -563,6 +563,11 @@ class WartimeEnv(gym.Env):
 
         pygame.display.flip()
         self._clock.tick(10)
+
+        if self.render_mode == "rgb_array":
+            return np.transpose(
+                pygame.surfarray.array3d(self._screen), axes=(1, 0, 2)
+            )
 
     def _draw_action_highlights(self, hud, sp):
         active_deploy = hud.get("active_deploy")

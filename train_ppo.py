@@ -19,6 +19,7 @@ from agents.ppo import PPOAgent, PPOConfig
 from config import CurriculumConfig, CurriculumTracker
 from env.wartime_env import WartimeEnv
 from datetime import datetime
+from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -36,7 +37,7 @@ def train():
         ppo_cfg.total_steps = args.steps
     cur_cfg = CurriculumConfig()
 
-    env = WartimeEnv(render_mode=None, curriculum_level=args.level)
+    env = RecordVideo(env, video_folder=os.path.join(args.out, "ppo_videos"), episode_trigger=lambda ep: ep % 100 == 0)
     obs_dim = env.observation_space.shape[0]
     n_actions = env.action_space.n
 
@@ -84,7 +85,7 @@ def train():
             rew_buf.append(reward)
             val_buf.append(value)
             logp_buf.append(log_prob)
-            done_buf.append(float(done))
+            done_buf.append(float(terminated))
 
             obs = next_obs
             ep_reward += reward
