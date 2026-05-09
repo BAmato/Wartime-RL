@@ -143,6 +143,7 @@ class WartimeEnv(gym.Env):
                         )
                         reward += end_r
                         if lost_territory:
+                            reward += self.cfg.lose_territory
                             combat_result = "lose_territory"
 
         elif self.turn_phase == self.PHASE_FORTIFY:
@@ -158,6 +159,7 @@ class WartimeEnv(gym.Env):
                 )
                 reward += end_r
                 if lost_territory:
+                    reward += self.cfg.lose_territory
                     combat_result = "lose_territory"
 
         reward += self.cfg.survival
@@ -453,7 +455,7 @@ class WartimeEnv(gym.Env):
     def _can_attack(self, src, tgt):
         return (
             self.state[src]["owner"] == "agent"
-            and self.state[src]["armies"] >= 2
+            and self.state[src]["armies"] >= 1 # was 2
             and self.state[tgt]["owner"] != "agent"
         )
 
