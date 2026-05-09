@@ -7,6 +7,7 @@ Usage:
     python train_dqn.py --steps 100000 --level 0
 """
 from __future__ import annotations
+import torch
 import argparse
 import csv
 import os
