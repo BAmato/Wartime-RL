@@ -53,8 +53,10 @@ class DQNAgent:
         return self.cfg.eps_end + (self.cfg.eps_start - self.cfg.eps_end) * (1.0 - ratio)
 
     @torch.no_grad()
-    def select_action(self, obs: np.ndarray) -> int:
+    def select_action(self, obs: np.ndarray, env=None) -> int:
         if np.random.random() < self.epsilon():
+            if env is not None:
+                return env.sample_valid_action()
             return int(np.random.randint(self.n_actions))
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         return int(self.online(obs_t).argmax(dim=1).item())

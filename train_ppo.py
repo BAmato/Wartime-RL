@@ -74,7 +74,7 @@ def train():
         val_buf.clear(); logp_buf.clear(); done_buf.clear()
 
         for _ in range(ppo_cfg.rollout_steps):
-            action, log_prob, value = agent.select_action(obs)
+            action, log_prob, value = agent.select_action(obs, env=env)
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 

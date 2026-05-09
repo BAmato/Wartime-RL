@@ -60,7 +60,7 @@ class PPOAgent:
 
     # ------------------------------------------------------------------
     @torch.no_grad()
-    def select_action(self, obs: np.ndarray) -> tuple[int, float, float]:
+    def select_action(self, obs: np.ndarray, env=None) -> tuple[int, float, float]:
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         action, log_prob, _, value = self.net.act(obs_t)
         return action.item(), log_prob.item(), value.item()
