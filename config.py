@@ -16,8 +16,8 @@ class RewardConfig:
     Tweak these instead of inside env
     """
 
-    capture_neutral: float = +1.5   # was +1.0
-    win_combat: float = +40.0 #+25.0    # was +5.0
+    capture_neutral: float = +2.0   # was +1.0
+    win_combat: float = +50.0 #+40.0 #+25.0    # was +5.0
     lose_combat: float = -0.10      # was -1.0 dice loss without territory change
     lose_territory: float = -3.0 #-5.0   # applied when enemy captures an agent territory
     deploy: float = +0.01 #0.05          # per army placed during reinforce phase
@@ -29,7 +29,7 @@ class RewardConfig:
     survival: float = -0.2
     continent_scale: float = +1.5
 
-    win_game: float = +100.0
+    win_game: float = +200.0
     lose_game: float = -20.0       # was -40.0 — match the win reward
 
     supply_drop: float = +1.0
@@ -52,14 +52,14 @@ class GameplayConfig:
 @dataclass
 class TrainingConfig:
     """DQN training hyperparameters"""
-    total_steps: int =  200_000#300_000
+    total_steps: int =  200_000#300_000 #
     batch_size: int = 128 #64
-    replay_capacity: int = 100_000#500_000
+    replay_capacity: int = 100_000
     learning_rate: float = 1e-4#5e-5   # back down from 2.5e-4
     gamma: float = 0.95
     tau: float = 0.01
-    eps_start: float = 0.75 #1.0
-    eps_end: float = 0.05
+    eps_start: float=0.85
+    eps_end: float = 0.05 #0.05
     eps_decay: int = 200_000 #200_000
     grad_clip: float = 1.0#10.0
 
@@ -125,20 +125,41 @@ class CurriculumTracker:
 
     def record(self, outcome: str) -> bool:
         """Record an episode outcome and advance the phase if ready"""
-        self._history.append(outcome)
+        self._history.append(outcome.strip().lower())
+    
+
+        if len(self._history) > self.cfg.eval_window:
+            self._history.pop(0)
+        
         if len(self._history) < self.cfg.eval_window:
             return False
-        win_rate = self.win_rate()
-        max_level = len(self.cfg.phase) - 1
-
-        if win_rate >= self.cfg.advance_win_rate and self.env.curriculum_level < max_level:
-            self.env.curriculum_level += 1
-            self._history.clear()
-            print(f"[Curriculum] Win rate {win_rate:.0%} >= {self.cfg.advance_win_rate:.0%} "
-                  f"— advanced to level {self.env.curriculum_level} "
-                  f"({self.cfg.phase[self.env.curriculum_level].name})")
-            return True
+        
+        current_wr = self.win_rate()
+        
+        print(f"Sliding window WR: {current_wr:.2%}")
+        
+        if current_wr >= self.cfg.advance_win_rate:
+            if self.env.curriculum_level < len(self.cfg.phase) - 1:
+                self.env.curriculum_level += 1
+                self._history.clear()  # Clear to start Level 1 with a fresh window
+                print(f"--- ADVANCING TO LEVEL {self.env.curriculum_level} ---")
+                return True
+                
         return False
+        # self._history.append(outcome)
+        # if len(self._history) < self.cfg.eval_window:
+        #     return False
+        # win_rate = self.win_rate()
+        # max_level = len(self.cfg.phase) - 1
+
+        # if win_rate >= self.cfg.advance_win_rate and self.env.curriculum_level < max_level:
+        #     self.env.curriculum_level += 1
+        #     self._history.clear()
+        #     print(f"[Curriculum] Win rate {win_rate:.0%} >= {self.cfg.advance_win_rate:.0%} "
+        #           f"— advanced to level {self.env.curriculum_level} "
+        #           f"({self.cfg.phase[self.env.curriculum_level].name})")
+        #     return True
+        # return False
 
     def win_rate(self) -> float:
         """Current Win Rate over the last eval_window episodes"""
