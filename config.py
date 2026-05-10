@@ -20,16 +20,16 @@ class RewardConfig:
     win_combat: float = +50.0 #+40.0 #+25.0    # was +5.0
     lose_combat: float = -0.10      # was -1.0 dice loss without territory change
     lose_territory: float = -3.0 #-5.0   # applied when enemy captures an agent territory
-    deploy: float = +0.01 #0.05          # per army placed during reinforce phase
-    pass_attack: float = -0.9 #-0.3  # was -0.5 — much stronger penalty
+    deploy: float = +0.1 #0.05          # per army placed during reinforce phase
+    pass_attack: float = -1.0 #-0.3  # was -0.5 — much stronger penalty
 
-    border_pressure: float = -0.0   # penalty per turn based on enemy army ratio at borders
+    border_pressure: float = -0.01   # penalty per turn based on enemy army ratio at borders
     defensive_fortify: float = +1.0  # reward for fortifying a territory adjacent to an enemy
 
-    survival: float = -0.2
-    continent_scale: float = +1.5
+    survival: float = -0.3
+    continent_scale: float = +2.0
 
-    win_game: float = +200.0
+    win_game: float = +250.0
     lose_game: float = -20.0       # was -40.0 — match the win reward
 
     supply_drop: float = +1.0
@@ -52,16 +52,16 @@ class GameplayConfig:
 @dataclass
 class TrainingConfig:
     """DQN training hyperparameters"""
-    total_steps: int =  200_000#300_000 #
+    total_steps: int =  200_000
     batch_size: int = 128 #64
-    replay_capacity: int = 100_000
-    learning_rate: float = 1e-4#5e-5   # back down from 2.5e-4
+    replay_capacity: int = 150_000
+    learning_rate: float = 1e-4
     gamma: float = 0.95
     tau: float = 0.01
     eps_start: float=0.85
-    eps_end: float = 0.05 #0.05
-    eps_decay: int = 200_000 #200_000
-    grad_clip: float = 1.0#10.0
+    eps_end: float = 0.05 
+    eps_decay: int = 200_000 
+    grad_clip: float = 1.0
 
 
 @dataclass
@@ -84,7 +84,7 @@ class CurriculumConfig:
     phase: list = field(default_factory=lambda: [
         CurriculumPhase(
             name="Beginner",
-            max_turns=150,
+            max_turns=200,
             agent_start_armies=8,
             enemy_start_armies=1,
             n_neutral_armies=1,
@@ -100,7 +100,7 @@ class CurriculumConfig:
         ),
         CurriculumPhase(
             name="Hard",
-            max_turns=150,
+            max_turns=100,
             agent_start_armies=4,
             enemy_start_armies=2,
             n_neutral_armies=2,
